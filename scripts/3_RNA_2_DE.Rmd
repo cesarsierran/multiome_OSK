@@ -1,0 +1,776 @@
+
+```{r setup, include=FALSE}
+.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+# Packages
+```{r packages}
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+library(gprofiler2)
+library(ggrastr)
+library(ggrepel)
+library(writexl)
+library(cowplot)
+library("readxl")
+```
+
+#Load object
+```{r}
+load("objects/3_RNA_1_obj_all_infect.rds")
+DefaultAssay(merged_all) <- "RNA"
+merged_all <- JoinLayers(merged_all)
+```
+
+#Define general functions
+```{r}
+################################################################################
+## Differential expression by cluster
+################################################################################
+
+DEbyCluster2 <- function(clusters,seuData, Group1, Group2) {
+  ## Define comparisons
+  merged_all.ident <- subset(x = seuData, idents = clusters)
+  Idents(object = merged_all.ident) <- merged_all.ident$Group
+  ##DE analysis  
+  FindMarkers(merged_all.ident,
+	      ident.1 = Group1,
+	      ident.2 = Group2,
+	      logfc.threshold = 0,
+	      min.pct=0.1,
+	      test.use="LR",
+	      latent.vars=c("Batch", "ncount_RNA"))
+}
+
+##############################################################################
+## My Volcanoplot
+##############################################################################
+myvolcano <- function(results, y, x) {
+  
+  ## Assign Directionality
+  results$diffexpressed <- "NO"
+  results$diffexpressed[results$avg_log2FC > fc & results$p_val_adj < pval] <- "YES"
+  results$diffexpressed[results$avg_log2FC < -fc & results$p_val_adj < pval] <- "YES"
+  
+  ## Plot
+  ggplot(results, aes(x=avg_log2FC, y=logp, label=genes)) +
+  geom_point(aes(col=results$diffexpressed),size=2) +
+  #scale_y_continuous(trans = "log1p") +
+  theme_bw(base_size = 14)+
+   geom_text_repel(
+    data = subset(results, logp>20 & (avg_log2FC>0.4 |avg_log2FC<0.4)),
+    aes(label = genes),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) +
+    guides(color = guide_legend(override.aes = list(size=3))) +
+    annotate(geom = "text", x = min(results$avg_log2FC), y = max(-log10(results$p_val_adj)), 
+	     label = paste("n =",sum(results$p_val_adj <= pval & results$avg_log2FC <= -fc)),
+	     hjust = 0.2, vjust = 3, size = 4) +
+  ylab("-log10(p.adj)") + xlab("log2FC") + theme(legend.position="none") +
+  geom_hline(yintercept=1.3) + geom_vline(xintercept=0.1) + geom_vline(xintercept=(-0.1)) + ylim(0,y) + xlim(-x,x)
+}
+```
+
+
+#1. AD_GFP v CON_GFP
+##Cell types
+```{r}
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all) <- merged_all$celltype
+clusters <- levels(Idents(merged_all))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all, Group1='AD_GFP', Group2='CON_GFP')
+names(wil)  <- clusters
+
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Differential Enrichment
+fc <- 0.1
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_fc0.rds")
+wil<-readRDS("./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_fc01.rds")
+
+wil.de<-lapply(wil, subset, p_val_adj <= pval) ## Remove NS genes
+wil.de <- wil.de[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.xl <- lapply(wil.de, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+  
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+  
+#writexl::write_xlsx(wil.xl, path = "./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_fc01.xlsx")
+
+##Get universe to use in shinyGO
+###exc
+universe_AD_CON_GFP_exc<-as.data.frame(rownames(wil$exc))
+#writexl::write_xlsx(universe_AD_CON_GFP_exc,
+		    path = "./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_exc_universe.xlsx")
+###inh
+universe_AD_CON_GFP_inh<-as.data.frame(rownames(wil$inh))
+#writexl::write_xlsx(universe_AD_CON_GFP_inh,
+		    path = "./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_inh_universe.xlsx")
+```
+
+##Engram cells
+```{r}
+## Filter infected cells
+idx <-which(merged_all$infected == 'Pos')
+merged_all_pos <- merged_all[,idx]
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all_pos) <- merged_all_pos$celltype
+clusters <- levels(Idents(merged_all_pos))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all_pos, "AD_GFP", "CON_GFP")
+names(wil)  <- clusters
+names(wil) <- gsub("/","-",names(wil))
+
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Thresholds
+fc <- 0.1
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+wil<-readRDS("./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+
+wil.de <- wil[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.de2<-lapply(wil.de, subset, p_val_adj <= pval) ## Remove NS genes
+wil.xl <- lapply(wil.de2, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+
+#writexl::write_xlsx(wil.xl,
+#		    path = "./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.xlsx")
+
+##Get universe to use shinyGO
+universe_AD_CON_GFP_engrams_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_CON_GFP_engrams_exc,
+		    path = "./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_universe_Engram_exc.xlsx")
+
+```
+
+
+#2. AD_OSK v AD_GFP 
+##Cell types
+```{r}
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all) <- merged_all$celltype
+clusters <- levels(Idents(merged_all))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all, "AD_OSK", "AD_GFP")
+names(wil)  <- clusters
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Thresholds
+fc <- 0.1
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Types_fc0.rds")
+wil<-readRDS("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Types_fc01.rds")
+
+wil.de <- wil[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.de2<-lapply(wil.de, subset, p_val_adj <= pval) ## Remove NS genes
+wil.xl <- lapply(wil.de2, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+
+#writexl::write_xlsx(wil.xl, path = "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Types_fc01.xlsx")
+
+#Universe
+universe_AD_OSK_AD_GFP_exc<-as.data.frame(rownames(wil.de$exc))
+#writexl::write_xlsx(universe_AD_OSK_AD_GFP_exc,
+		    path = "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_universe_exc.xlsx")
+```
+
+##Engram cells
+```{r}
+## Filter infected cells
+idx <-which(merged_all$infected == 'Pos')
+merged_all_pos <- merged_all[,idx]
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all_pos) <- merged_all_pos$celltype
+clusters <- levels(Idents(merged_all_pos))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all_pos, "AD_OSK", "AD_GFP")
+names(wil)  <- clusters
+names(wil) <- gsub("/","-",names(wil))
+
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Differential Enrichment
+fc <- 0
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc0.rds")
+wil<-readRDS("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc01.rds")
+
+wil.de <- wil[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.de2<-lapply(wil.de, subset, p_val_adj <= pval) ## Remove NS genes
+wil.xl <- lapply(wil.de2, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+writexl::write_xlsx(wil.xl,
+		    path = "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc0.xlsx")
+
+#Universe
+universe_AD_CON_GFP_engrams_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_CON_GFP_engrams_exc,
+		    path = "./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_universe_engrams_exc.xlsx")
+```
+
+
+
+#3. AD_OSK v CON_GFP 
+##Cell types
+```{r}
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all) <- merged_all$celltype
+clusters <- levels(Idents(merged_all))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all, "AD_OSK", "CON_GFP")
+names(wil)  <- clusters
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Thresholds
+fc <- 0.1
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Types_fc01.rds")
+
+wil.de <- wil[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.de2<-lapply(wil.de, subset, p_val_adj <= pval) ## Remove NS genes
+wil.xl <- lapply(wil.de2, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+
+writexl::write_xlsx(wil.xl, path = "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Types_fc01.xlsx")
+
+#Universe
+universe_AD_OSKvCON_GFP_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_OSKvCON_GFP_exc,
+		    path = "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_universe_exc.xlsx")
+```
+
+##Engram cells
+```{r}
+## Filter infected cells
+idx <-which(merged_all$infected == 'Pos')
+merged_all_pos <- merged_all[,idx]
+################################################################################
+## Run DE for each cell type
+################################################################################
+## Define clusters to be compared
+Idents(merged_all_pos) <- merged_all_pos$celltype
+clusters <- levels(Idents(merged_all_pos))
+
+wil <- lapply(clusters,DEbyCluster2,merged_all_pos, "AD_OSK", "CON_GFP")
+names(wil)  <- clusters
+names(wil) <- gsub("/","-",names(wil))
+
+################################################################################
+## Determine number of Differenitally Expressed Genes
+################################################################################
+## Define Differential Enrichment
+fc <- 0
+pval <- 0.05
+
+## Count DE genes in each cluster in each seurat object
+DE <- lapply(wil,function(DE) {
+  tot <- ifelse(is.null(DE), 0, nrow(DE))
+  up <- sum(DE$p_val_adj <= pval & DE$avg_log2FC >= fc)
+  dw <- sum(DE$p_val_adj <= pval & DE$avg_log2FC <= -fc)
+  cbind(tot,up,dw)
+})
+
+DE <- do.call(rbind,DE)
+rownames(DE)  <- names(wil)
+
+## Save lists
+saveRDS(wil, "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Engram_fc0.rds")
+
+wil.de <- wil[!unlist(lapply(wil,is.null))] ## Remove cell types with no DE
+wil.de2<-lapply(wil.de, subset, p_val_adj <= pval) ## Remove NS genes
+wil.xl <- lapply(wil.de2, function(x) { ## Reformat data frame
+  desc <- gconvert(rownames(x), organism = "mmusculus")
+  data.frame(gene = rownames(x),
+	     avg_log2FC = round(x$avg_log2FC, 3),
+	     pct.pos = x$pct.1,
+	     pct.neg = x$pct.2,
+	     p_val_adj = signif(x$p_val_adj, digits=3),
+	     description = desc$description[match(rownames(x), desc$input)])
+})
+
+wil.xl<-lapply(wil.xl, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+writexl::write_xlsx(wil.xl,
+		    path = "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Engram_fc0.xlsx")
+
+universe_AD_CON_GFP_engrams_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_CON_GFP_engrams_exc,
+		    path = "./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_universe_engrams_exc.xlsx")
+```
+
+
+
+#Check rescue in engrams 
+```{r}
+#Taking DEGs between AD and CON GFP engram
+wil_AD_CON_GFP<-readRDS("./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+wil_AD_CON_GFP<-wil_AD_CON_GFP$exc
+wil_AD_CON_GFP$genes<-row.names(wil_AD_CON_GFP)
+#Taking DEGs between AD_OSK and CON_GFP engram
+wil_AD_OSK_CON_GFP<-readRDS("./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Engram_fc0.rds")
+wil_AD_OSK_CON_GFP<-wil_AD_OSK_CON_GFP$exc
+wil_AD_OSK_CON_GFP$genes<-row.names(wil_AD_OSK_CON_GFP)
+
+library(dplyr)
+resc<-full_join(wil_AD_CON_GFP, wil_AD_OSK_CON_GFP, by="genes")
+resc<-subset(resc, resc$p_val_adj.x<0.05)
+resc<-resc[,c(2,6,8)]
+library(tidyr)
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+
+ggplot(resc_long_WT, aes(x = name, y = log2FC, group=genes)) + geom_line() +
+  theme_minimal()
+
+#Split up and down
+#DW
+resc<-full_join(wil_AD_CON_GFP, wil_AD_OSK_CON_GFP, by="genes")
+resc<-subset(resc, resc$avg_log2FC.x<0)
+resc<-subset(resc, resc$p_val_adj.x<0.05)
+resc<-resc[,c(2,6,8)]
+resc<-resc[complete.cases(resc), ]
+library(tidyr)
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+avg_values <- aggregate(log2FC ~ name, data = resc_long_WT, FUN = mean)
+
+plot<-ggplot(resc_long_WT, aes(x = name, y = log2FC, group=genes)) + geom_line() + geom_line(data = avg_values, aes(group = 1), color = "red", size=2) +
+  theme_minimal()
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_rescued_lineplot_dw.pdf", height = 5, width = 5, dpi=300,plot=plot)
+
+#UP
+resc<-full_join(wil_AD_CON_GFP, wil_AD_OSK_CON_GFP, by="genes")
+resc<-subset(resc, resc$avg_log2FC.x>0)
+resc<-subset(resc, resc$p_val_adj.x<0.01)
+resc<-resc[,c(2,6,8)]
+resc<-resc[complete.cases(resc), ]
+library(tidyr)
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+avg_values <- aggregate(log2FC ~ name, data = resc_long_WT, FUN = mean)
+
+plot<-ggplot(resc_long_WT, aes(x = name, y = log2FC, group=genes)) + geom_line() + geom_line(data = avg_values, aes(group = 1), color = "red", size=2) +
+  theme_minimal()
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_rescued_lineplot_up.pdf", height = 5, width = 5, dpi=300,plot=plot)
+```
+
+##Check stats of rescue 
+```{r}
+#Taking DEGs between AD and CON GFP engram
+wil_AD_CON_GFP<-readRDS("./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+wil_AD_CON_GFP<-wil_AD_CON_GFP$exc
+wil_AD_CON_GFP$genes<-row.names(wil_AD_CON_GFP)
+#Taking DEGs between AD_OSK and CON_GFP engram
+wil_AD_OSK_CON_GFP<-readRDS("./Analyses/RNA/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_DE_Engram_fc0.rds")
+wil_AD_OSK_CON_GFP<-wil_AD_OSK_CON_GFP$exc
+wil_AD_OSK_CON_GFP$genes<-row.names(wil_AD_OSK_CON_GFP)
+
+#DW
+resc<-full_join(wil_AD_CON_GFP, wil_AD_OSK_CON_GFP, by="genes")
+resc<-subset(resc, resc$avg_log2FC.x<0)
+resc<-subset(resc, resc$p_val_adj.x<0.05)
+resc<-resc[,c(2,6,8)]
+resc<-resc[complete.cases(resc), ]
+library(tidyr)
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+
+t.test(log2FC ~ name, paired = TRUE, data = resc_long)
+
+
+#UP
+resc<-full_join(wil_AD_CON_GFP, wil_AD_OSK_CON_GFP, by="genes")
+resc<-subset(resc, resc$avg_log2FC.x>0)
+resc<-subset(resc, resc$p_val_adj.x<0.05)
+resc<-resc[,c(2,6,8)]
+resc<-resc[complete.cases(resc), ]
+library(tidyr)
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+
+t.test(log2FC ~ name, paired = TRUE, data = resc_long)
+```
+
+#Select rescued genes
+```{r}
+#Taking DEGs between AD and CON GFP engram
+DEGs_AD_CON_GFP<-read_excel("/scratch/csierra/multiome_osk/Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc01.xlsx")
+
+#Taking DEGs between AD_OSK and AD_GFP engram
+DEGs_AD_OSKvAD_GFP<-read_excel("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc01.xlsx")
+
+#Check overlap
+##UpDown
+DEGs_AD_CON_GFP_up<-subset(DEGs_AD_CON_GFP, DE=="Up")
+DEGs_AD_OSKvAD_GFP_down<-subset(DEGs_AD_OSKvAD_GFP, DE=="Down")
+
+DEGs_1_up<-DEGs_AD_CON_GFP_up$gene
+DEGs_2_down<-DEGs_AD_OSKvAD_GFP_down$gene
+
+venn.plot <- venn.diagram(x = list("A"=DEGs_1_up, "B"= DEGs_2_down), NULL, fill=c("darkmagenta", "darkblue"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("DEGs_1_up", "DEGs_2_down"), cat.pos=0, na="remove")
+grid.draw(venn.plot, recording=FALSE)
+
+go.obj <- testGeneOverlap(newGeneOverlap(DEGs_1_up, DEGs_2_down, genome.size=9784))
+go.obj
+
+##DownUp
+DEGs_AD_CON_GFP_down<-subset(DEGs_AD_CON_GFP, DE=="Down")
+DEGs_AD_OSKvAD_GFP_up<-subset(DEGs_AD_OSKvAD_GFP, DE=="Up")
+
+DEGs_1_down<-DEGs_AD_CON_GFP_down$gene
+DEGs_2_up<-DEGs_AD_OSKvAD_GFP_up$gene
+
+venn.plot <- venn.diagram(x = list("A"=DEGs_1_down, "B"= DEGs_2_up), NULL, fill=c("darkmagenta", "darkblue"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("DEGs_1_down", "DEGs_2_up"), cat.pos=0, na="remove")
+grid.draw(venn.plot, recording=FALSE)
+
+go.obj <- testGeneOverlap(newGeneOverlap(DEGs_1_down, DEGs_2_up, genome.size=9784))
+go.obj
+
+##get joint universe for GO
+universe_1<-read_excel("/scratch/csierra/multiome_osk/Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_universe_Engram_exc.xlsx")
+universe_2<-read_excel("/scratch/csierra/multiome_osk/Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_universe_engrams_exc.xlsx")
+
+universe<-unique(rbind(universe_1, universe_2))
+#writexl::write_xlsx(universe,
+#		    path = "./Analyses/RNA/universe_1_2_engrams.xlsx")
+
+resc<-inner_join(DEGs_AD_CON_GFP, DEGs_AD_OSKvAD_GFP, by="gene")
+resc <- resc[resc$DE.x != resc$DE.y, ]
+
+#Save rescued gene list
+#writexl::write_xlsx(resc,
+#		    path = "./Analyses/RNA/rescued.xlsx")
+
+#Decreasing FC
+resc_ordered <- resc[order(-resc$avg_log2FC.x), ]
+
+resc_genes<-resc_ordered$gene
+
+
+```
+
+#Show rescued genes in Heatmap
+```{r}
+obj_min<-subset(merged_all, celltype=="exc")
+obj_min<-subset(obj_min, infected=="Pos")
+
+combined_averages <- AggregateExpression(obj_min, return.seurat = TRUE, group.by = "Group") 
+
+#Get expression data of genes of interest to order features
+expr_df<-as.data.frame(combined_averages[["RNA"]]$counts)
+expr_df$gene<-row.names(expr_df)
+resc_join<-left_join(resc, expr_df, by="gene")
+#Decreasing expression
+resc_ordered <- resc_genes[order(-resc$`AD-GFP`), ]
+resc_genes<-resc_ordered$gene
+
+#Order Groups
+order<-c("CON-GFP", "AD-GFP", "AD-OSK" )
+combined_averages@meta.data$Group <- factor(x = combined_averages@active.ident, levels = order)
+p<-DoHeatmap(combined_averages, features = resc_genes, label = FALSE ,draw.lines = FALSE, group.by = "Group")
+
+
+#Use scale.data
+#Get expression data of genes of interest to order features
+expr_df<-as.data.frame(combined_averages[["RNA"]]$scale.data)
+expr_df$gene<-row.names(expr_df)
+resc_join<-left_join(resc, expr_df, by="gene")
+#Decreasing expression
+resc_ordered <- resc_join[order(-resc_join$`AD-GFP`), ]
+resc_genes<-resc_ordered$gene
+resc_genes<-resc_genes[ !resc_genes == 'GFP']
+
+#Order Groups
+order<-c("CON-GFP", "AD-GFP", "AD-OSK" )
+combined_averages@meta.data$Group <- factor(x = combined_averages@active.ident, levels = order)
+p<-DoHeatmap(combined_averages, features = resc_genes, label = FALSE ,draw.lines = FALSE, group.by = "Group")
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_rescued_heatmap.pdf", height = 6, width = 3, dpi=300,plot=p)
+
+```
+
+#Volcanoplots
+```{r}
+fc <- 0.1
+pval <- 0.05
+
+wil_1_Types<-readRDS("./Analyses/RNA/1_ADvCON_GFP/AD_GFPvCON_GFP_DE_Types_fc0.rds")
+#Exc
+wil_1_Types_Exc<-wil_1_Types$exc
+wil_1_Types_Exc$genes<-row.names(wil_1_Types_Exc)
+wil_1_Types_Exc$logp<- -log10(wil_1_Types_Exc$p_val_adj)
+#Inh
+wil_1_Types_Inh<-wil_1_Types$inh
+wil_1_Types_Inh$genes<-row.names(wil_1_Types_Inh)
+wil_1_Types_Inh$logp<- -log10(wil_1_Types_Inh$p_val_adj)
+#Glia
+wil_1_Types_Glia<-wil_1_Types$glia
+wil_1_Types_Glia$genes<-row.names(wil_1_Types_Glia)
+wil_1_Types_Glia$logp<- -log10(wil_1_Types_Glia$p_val_adj)
+
+wil_1_Engrams<-readRDS("./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+#Exc
+wil_1_Engrams_Exc<-wil_1_Engrams$exc
+wil_1_Engrams_Exc$genes<-row.names(wil_1_Engrams_Exc)
+wil_1_Engrams_Exc$logp<- -log10(wil_1_Engrams_Exc$p_val_adj)
+#Inh
+wil_1_Engrams_Inh<-wil_1_Engrams$inh
+wil_1_Engrams_Inh$genes<-row.names(wil_1_Engrams_Inh)
+wil_1_Engrams_Inh$logp<- -log10(wil_1_Engrams_Inh$p_val_adj)
+#Glia
+wil_1_Engrams_Glia<-wil_1_Engrams$glia
+wil_1_Engrams_Glia$genes<-row.names(wil_1_Engrams_Glia)
+wil_1_Engrams_Glia$logp<- -log10(wil_1_Engrams_Glia$p_val_adj)
+
+
+wil_2_Types<-readRDS("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Types_fc0.rds")
+#Exc
+wil_2_Types_Exc<-wil_2_Types$exc
+wil_2_Types_Exc$genes<-row.names(wil_2_Types_Exc)
+wil_2_Types_Exc$logp<- -log10(wil_2_Types_Exc$p_val_adj)
+#Inh
+wil_2_Types_Inh<-wil_2_Types$inh
+wil_2_Types_Inh$genes<-row.names(wil_2_Types_Inh)
+wil_2_Types_Inh$logp<- -log10(wil_2_Types_Inh$p_val_adj)
+#Glia
+wil_2_Types_Glia<-wil_2_Types$glia
+wil_2_Types_Glia$genes<-row.names(wil_2_Types_Glia)
+wil_2_Types_Glia$logp<- -log10(wil_2_Types_Glia$p_val_adj)
+
+wil_2_Engrams<-readRDS("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc0.rds")
+
+#wil_2_Engrams<-lapply(wil_2_Engrams, subset, p_val_adj <= pval) ## Remove NS genes
+#Exc
+wil_2_Engrams_Exc<-wil_2_Engrams$exc
+wil_2_Engrams_Exc$genes<-row.names(wil_2_Engrams_Exc)
+wil_2_Engrams_Exc$logp<- -log10(wil_2_Engrams_Exc$p_val_adj)
+#Inh
+wil_2_Engrams_Inh<-wil_2_Engrams$inh
+wil_2_Engrams_Inh$genes<-row.names(wil_2_Engrams_Inh)
+wil_2_Engrams_Inh$logp<- -log10(wil_2_Engrams_Inh$p_val_adj)
+#Glia
+wil_2_Engrams_Glia<-wil_2_Engrams$glia
+wil_2_Engrams_Glia$genes<-row.names(wil_2_Engrams_Glia)
+wil_2_Engrams_Glia$logp<- -log10(wil_2_Engrams_Glia$p_val_adj)
+```
+
+#Volcanoplots
+```{r, eval=F}
+#1
+p1_exc<-myvolcano(wil_1_Types_Exc, y=150, x=2.5)
+p1_inh<-myvolcano(wil_1_Types_Inh, y=150, x=4.5)
+p1_glia<-myvolcano(wil_1_Types_Glia, y=150, x=4.5)
+
+p1<- p1_exc | p1_inh | p1_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_p1Types_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p1)
+
+p1_exc<-myvolcano(wil_1_Engrams_Exc, y=150, x=2.5)
+p1_inh<-myvolcano(wil_1_Engrams_Inh, y=150, x=6)
+p1_glia<-myvolcano(wil_1_Engrams_Glia, y=150, x=6)
+
+p1<- p1_exc | p1_inh | p1_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_p1Engrams_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p1)
+
+#2
+p2_exc<-myvolcano(wil_2_Types_Exc, y=150, x=3.3)
+p2_inh<-myvolcano(wil_2_Types_Inh, y=150, x=3.3)
+p2_glia<-myvolcano(wil_2_Types_Glia, y=150, x=3.3)
+
+p2<- p2_exc | p2_inh | p2_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_p2Types_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p2)
+
+p2_exc<-myvolcano(wil_2_Engrams_Exc, y=40, x=4)
+p2_inh<-myvolcano(wil_2_Engrams_Inh, y=40, x=4)
+p2_glia<-myvolcano(wil_2_Engrams_Glia, y=40, x=4)
+
+p2<- p2_exc | p2_inh | p2_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_2_p2Engrams_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p2)
+```
+
+```{r}
+library(plotly)
+ggplotly(p1_exc)
+```

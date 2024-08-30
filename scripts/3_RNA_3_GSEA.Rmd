@@ -1,0 +1,189 @@
+
+```{r setup, include=FALSE}
+.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+# Packages
+```{r packages}
+library(ggplot2)
+library(genekitr)
+library("readxl")
+library(biomaRt)
+library(dplyr)
+library(ggrepel)
+library(writexl)
+library(plotly)
+```
+
+#Get gene set
+```{r}
+gs <- geneset::getGO(org = "mouse",ont =c("bp"))
+#ALT
+#load("mouse_H_v5.RData")
+```
+
+#Read DEGs
+```{r}
+#1
+DEGs_AD_CON_GFP<-readRDS("/scratch/csierra/multiome_osk/Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc0.rds")
+DEGs_AD_CON_GFP<-DEGs_AD_CON_GFP$exc
+#Remove WPRE etc
+DEGs_AD_CON_GFP$genes<-row.names(DEGs_AD_CON_GFP)
+DEGs_AD_CON_GFP<-subset(DEGs_AD_CON_GFP, genes!=c("WPRE", "CW3SL", "GFP"))
+#2
+DEGs_AD_OSKvAD_GFP<-readRDS("/scratch/csierra/multiome_osk/Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram_fc0.rds")
+DEGs_AD_OSKvAD_GFP<-DEGs_AD_OSKvAD_GFP$exc
+#Remove WPRE etc
+DEGs_AD_OSKvAD_GFP$genes<-row.names(DEGs_AD_OSKvAD_GFP)
+DEGs_AD_OSKvAD_GFP<-subset(DEGs_AD_OSKvAD_GFP, genes!=c("WPRE", "CW3SL", "GFP"))
+```
+
+#Transform to geneList
+```{r}
+#1
+DEGs_AD_CON_GFP<-as.data.frame(DEGs_AD_CON_GFP)
+geneList = as.numeric(DEGs_AD_CON_GFP[,2])
+names(geneList)= row.names(DEGs_AD_CON_GFP) 
+geneList_1 = sort(geneList, decreasing = TRUE)
+
+#2
+DEGs_AD_OSKvAD_GFP<-as.data.frame(DEGs_AD_OSKvAD_GFP)
+geneList = as.numeric(DEGs_AD_OSKvAD_GFP[,2])
+names(geneList)= row.names(DEGs_AD_OSKvAD_GFP) 
+geneList_2 = sort(geneList, decreasing = TRUE)
+```
+
+#GSEA analysis
+```{r}
+gse_1 <- genGSEA(genelist = geneList_1, geneset = gs, q_cutoff = 1,p_cutoff = 1, min_gset_size = 10)
+
+gse_2 <- genGSEA(genelist = geneList_2, geneset = gs, q_cutoff = 1,p_cutoff = 1, min_gset_size = 10)
+```
+
+#Join
+```{r}
+gse_1_df<-as.data.frame(gse_1$gsea_df)
+gse_2_df<-as.data.frame(gse_2$gsea_df)
+
+gse_join<-inner_join(gse_1_df, gse_2_df, by="Description")
+
+#Filter those that are significant in either of the two
+gse_join_sign<-subset(gse_join, gse_join$p.adjust.x<0.05 | gse_join$p.adjust.y<0.05)
+
+#Check rescued categories
+dwup<-subset(gse_join_sign, gse_join_sign$NES.x<0 & gse_join_sign$NES.y>0)
+updw<-subset(gse_join_sign, gse_join_sign$NES.x>0 & gse_join_sign$NES.y<0)
+
+#Check not rescued
+dwdw<-subset(gse_join_sign, gse_join_sign$NES.x<0 & gse_join_sign$NES.y<0)
+upup<-subset(gse_join_sign, gse_join_sign$NES.x>0 & gse_join_sign$NES.y>0)
+
+```
+
+#Do full join and substiute NAs by 0s
+```{r}
+gse_join_full<-full_join(gse_1_df, gse_2_df, by="Description")
+gse_join_full["NES.x"][is.na(gse_join_full["NES.x"])] <- 0
+gse_join_full["NES.y"][is.na(gse_join_full["NES.y"])] <- 0
+
+#Filter those that are significant in either of the two
+gse_join_sign<-subset(gse_join, gse_join$p.adjust.x<0.05 | gse_join$p.adjust.y<0.05)
+```
+
+#Plot
+```{r}
+#1 sign
+sign_1<-subset(gse_join_sign, p.adjust.x<0.1)
+
+#2 sign
+sign_2<-subset(gse_join_sign, p.adjust.y<0.1)
+
+#Sign both
+sign_all<-subset(gse_join_sign, p.adjust.y<0.1 & p.adjust.x<0.1)
+
+gse_join_sign %>% 
+  ggplot(aes(x = NES.x, y = NES.y)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes()) +
+  geom_point(data=sign_1, aes(x = NES.x, y = NES.y), color="red")+
+  geom_point()+ theme_bw()
+
+#Add colors
+p<-ggplot(data=gse_join_sign, aes(x = NES.x, y = NES.y, label=Description)) +
+  xlab("NES AD") +  ylab("NES OSK")+
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes()) +
+  geom_point(data=sign_1, aes(x = NES.x, y = NES.y), color="red") +
+  geom_point(data=sign_2, aes(x = NES.x, y = NES.y), color="blue") +
+  geom_point(data=sign_all, aes(x = NES.x, y = NES.y), color="green")+
+   geom_text_repel() +
+  theme_bw()
+ggplotly(p)
+
+#ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_GSEA.pdf", height = 10, width = 10, dpi=300)
+```
+
+#plot by categories
+```{r}
+cat<-read.csv("/scratch/csierra/multiome_osk/Analyses/RNA/gsea_categories.csv")
+gse_join_sign_cat<-left_join(gse_join_sign, cat, by="mmusculus_BP_ID.x")
+write_xlsx(gse_join_sign_cat, "/scratch/csierra/multiome_osk/Analyses/RNA/GSEA.xlsx")
+
+gse_join_sign_cat %>% 
+  ggplot(aes(x = NES.x, y = NES.y, col=Category)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_point(aes()) + theme_bw() + NoLegend()
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_GSEA_categories.pdf", height = 10, width = 10, dpi=300)
+```
+
+#Dotplot of interesting categories
+```{r}
+gse_join_sign_cat$log.x<-(-log(gse_join_sign_cat$p.adjust.x))
+gse_join_sign_cat$log.y<-(-log(gse_join_sign_cat$p.adjust.y))
+
+#Diff approach
+gse_1_df$comp<-"one"
+gse_2_df$comp<-"two"
+gse_rbind<-rbind(gse_1_df, gse_2_df)
+gse_rbind$logp<-(-log(gse_rbind$p.adjust))
+
+gse_join_sign_cat$log.y<-(-log10(gse_join_sign_cat$p.adjust.y))
+
+#Reorder
+gse_rbind_top<-gse_rbind[c(1:10, 900:910),]
+
+
+p <- ggplot(gse_rbind_top, aes(x=comp, y = Description)) + 
+               geom_point(aes(size = logp, color = NES)) +
+               theme_bw(base_size = 14) +
+        scale_colour_gradient(limits=c(0, 0.01), low="red") +
+        ylab(NULL) +
+        ggtitle("GOBP pathway enrichment")
+
+p + facet_grid(.~celltype)
+
+#Cherry pick - 2 per group
+gse_rbind_cherry<-gse_rbind
+gse_rbind_cherry$Description <- factor(gse_rbind_cherry$Description, levels = c("ribosome assembly","cytoplasmic translation", "positive regulation of cell killing","cell killing", "positive regulation of T cell mediated immunity","positive regulation of adaptive immune response", "endothelial cell differentiation","tissue remodeling","homophilic cell adhesion via plasma membrane adhesion molecules", "heterophilic cell-cell adhesion via plasma membrane cell adhesion molecules","regulation of presynapse organization", "regulation of presynapse assembly"))
+
+gse_rbind_cherry<-gse_rbind_cherry[complete.cases(gse_rbind_cherry),]
+
+p<-gse_rbind_cherry %>%
+  mutate(logp_trunc = pmin(logp, 10)) %>%
+  ggplot(aes(x=comp, y = Description)) + 
+               geom_point(aes(size = logp_trunc, color = NES)) + 
+  scale_size(range=c(2,10),
+             breaks=c(0,5,10),
+             labels=c("0","5","10+"),
+             guide="legend")+
+               theme_bw(base_size = 14) +
+        scale_colour_gradient2(low="blue", high="red", midpoint = 0) +
+        ylab(NULL) 
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_GSEA_dotplot.pdf", height = 8, width = 8, dpi=300,plot=p)
+```

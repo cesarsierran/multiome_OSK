@@ -1,0 +1,318 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set wd and lib path
+```{r}
+setwd("/scratch/csierra/multiome_osk")
+.libPaths("/scratch/csierra/rstudio/R")
+```
+
+## Packages
+```{r packages}
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+library(plotly)
+```
+
+#load object
+```{r}
+load("objects/2_obj_all_RNA_QC_noCON_OSK.rds")
+```
+
+#My Dataset
+```{r}
+#All
+cellcomp<-as.data.frame(table(Idents(merged_all)))
+cellcomp_celltype<-as.data.frame(table(merged_all$celltype))
+cellcomp_celltype$Var1<-c("Excitatory", "Non-neuron", "Inhibitory")
+#Excitatory
+cellcomp_exc<-cellcomp[1:8,]
+#Inbhibitory
+cellcomp_inh<-cellcomp[9:13,]
+```
+
+#Load ABA dataset to compare with
+```{r}
+load("/scratch/csierra/multiome_osk/objects/ss.seurat_all.rda") #Object subsetted previously to select "PL-ILA", "ACA", "ALM", "MOp"
+
+##Excitatory
+ss.seurat1 = subset(ss.seurat_all, subset = region_label %in% c("PL-ILA", "ACA"))
+ss.seurat_exc = subset(ss.seurat1, subset = subclass_label %in% c("L2/3 IT CTX", "L4/5 IT CTX", "L5 IT CTX", "L5 PT CTX", "L5/6 NP CTX", "L6 CT CTX", "L6 IT CTX", "L6b CTX"))
+
+##Inhibitory
+ss.seurat_inh = subset(ss.seurat_all, subset = subclass_label %in% c("Lamp5", "Pvalb", "Sncg", "Sst", "Vip"))
+
+##Glia
+ss.seurat_glia = subset(ss.seurat_all, subset = subclass_label %in% c("Astro", "Endo", "Micro-PVM", "Oligo", "SMC-Peri", "VLMC", "CR"))
+
+#All
+cellcomp_ABA<-as.data.frame(table(ss.seurat_all@meta.data[["class_label"]]))
+cellcomp_ABA$Var1<-c("Inhibitory","Excitatory", "Non-neuron")
+##exc
+cellcomp_ABA_exc<-as.data.frame(table(ss.seurat_exc$subclass_label))
+##inh
+cellcomp_ABA_inh<-as.data.frame(table(ss.seurat_inh$subclass_label))
+```
+#Bhattacherjee et al 2023 dataset
+```{r}
+cellcomp_b_2023<-data.frame(Var1=c("Excitatory", "Non-neuron", "Inhibitory"),
+                            Freq=c(54.6, 34.6, 10.8),
+                            stringsAsFactors=FALSE)
+
+cellcomp_exc_b_2023<-data.frame(Var1=c("L6 CT CTX", "L6 IT CTX", "L5/6 NP CTX", "L4/5 IT CTX", "L2/3 IT CTX", "L5 PT CTX", "L5 IT CTX", "L6b CTX"),
+                            Freq=c(23.1, 6.7, 6.1, 12.1, 21.5, 16.5, 14, 0),
+                            stringsAsFactors=FALSE)
+
+cellcomp_inh_b_2023<-data.frame(Var1=c("Lamp5", "Pvalb", "Sncg", "Sst", "Vip"),
+                            Freq=c(12.7, 33.6, 7.6, 35.2, 10.9),
+                            stringsAsFactors=FALSE)
+```
+
+#Stacked barplots
+```{r}
+#All
+cellcomp_celltype$orig<-"mydataset"
+cellcomp_celltype$Freq2<-cellcomp_celltype$Freq/34603*100
+
+cellcomp_ABA$orig<-"ABA"
+cellcomp_ABA$Freq2<-cellcomp_ABA$Freq/22896*100
+
+cellcomp_b_2023$orig<-"B"
+cellcomp_b_2023$Freq2<-cellcomp_b_2023$Freq
+
+cellcomp_df<-rbind(cellcomp_celltype, cellcomp_ABA, cellcomp_b_2023)
+cellcomp_df$orig <- factor(cellcomp_df$orig, levels = c("mydataset", "ABA", "B"))
+
+ggplot(cellcomp_df, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_All.pdf", height = 10, width = 8, dpi=600)
+
+#Exc subtypes
+cellcomp_exc$orig<-"mydataset"
+cellcomp_exc$Freq2<-cellcomp_exc$Freq/17062*100
+
+cellcomp_ABA_exc$orig<-"ABA"
+cellcomp_ABA_exc$Freq2<-cellcomp_ABA_exc$Freq/5180*100
+
+cellcomp_exc_b_2023$orig<-"B"
+cellcomp_exc_b_2023$Freq2<-cellcomp_exc_b_2023$Freq
+
+cellcomp_df_exc<-rbind(cellcomp_exc, cellcomp_ABA_exc, cellcomp_exc_b_2023)
+cellcomp_df_exc$orig <- factor(cellcomp_df_exc$orig, levels = c("mydataset", "ABA", "B"))
+
+ggplot(cellcomp_df_exc, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_exc.pdf", height = 10, width = 8, dpi=600)
+
+#Inh subtypes
+cellcomp_inh$orig<-"mydataset"
+cellcomp_inh$Freq2<-cellcomp_inh$Freq/4331*100
+
+cellcomp_ABA_inh$orig<-"ABA"
+cellcomp_ABA_inh$Freq2<-cellcomp_ABA_inh$Freq/7556*100
+
+cellcomp_inh_b_2023$orig<-"B"
+cellcomp_inh_b_2023$Freq2<-cellcomp_inh_b_2023$Freq
+
+cellcomp_df_inh<-rbind(cellcomp_inh, cellcomp_ABA_inh, cellcomp_inh_b_2023)
+cellcomp_df_inh$orig <- factor(cellcomp_df_inh$orig, levels = c("mydataset", "ABA", "B"))
+
+ggplot(cellcomp_df_inh, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_inh.pdf", height = 10, width = 8, dpi=600)
+```
+
+##Compositional analysis by sCCODA - prepare dataset
+```{r}
+cellcomp<-as.data.frame(table(Idents(merged_all), merged_all$orig.ident))
+library(tidyverse) 
+cellcomp2<-pivot_wider(cellcomp, names_from = Var2, values_from = Freq)
+cellcomp2_t <- as.data.frame(t(cellcomp2))
+cellcomp2_t$Mouse<-row.names(cellcomp2_t)
+colnames(cellcomp2_t)<-cellcomp2_t[1,]
+cellcomp2_t<-cellcomp2_t[-1,]
+write.csv(cellcomp2_t, "cell_composition.csv", row.names=FALSE)
+
+#The only significant difference is DAMs
+```
+
+#Check infected cells
+```{r}
+#Count OSK/GFP
+#OSK: CW3SL
+#GFP: WPRE
+
+#Add infection information to the object
+WPRE_pos <- WhichCells(merged_all, expression = WPRE > 0)
+CW3SL_pos <- WhichCells(merged_all, expression = CW3SL > 0)
+pos<-c(WPRE_pos,CW3SL_pos)
+
+merged_all$infected_CW3SL<- ifelse(colnames(merged_all) %in% CW3SL_pos, "Pos", "Neg")
+merged_all$infected_WPRE<- ifelse(colnames(merged_all) %in% WPRE_pos, "Pos", "Neg")
+merged_all$infected<- ifelse(colnames(merged_all) %in% pos, "Pos", "Neg")
+```
+
+##Plot infected %
+###Per individual
+```{r}
+##CW3SL
+df<-as.data.frame(table(merged_all$infected_CW3SL, merged_all$orig.ident))
+
+# Add the population size of each sample
+df <- df %>%
+  mutate(pop = case_when(
+    Var2 == "CON_GFP1"   ~ 4852,
+    Var2 == "CON_GFP2"  ~ 2696,
+    Var2 == "CON_GFP3"   ~ 2891,
+    Var2 == "CON_OSK1"  ~ 6878,
+    Var2 == "CON_OSK2"   ~ 4653,
+    Var2 == "AD_GFP1"  ~ 5296,
+    Var2 == "AD_GFP2"   ~ 2904,
+    Var2 == "AD_GFP3"  ~ 2234,
+    Var2 == "AD_OSK1"   ~ 4749,
+    Var2 == "AD_OSK2"  ~ 2436,
+     Var2 == "AD_OSK3"   ~ 2998,
+    Var2 == "AD_OSK4"  ~ 3154,
+    TRUE                  ~ NA
+  ))
+#Get pct
+df$pct<-df$Freq/df$pop*100
+
+library(ggplot2)
+df %>%
+    ggplot(aes(x = Var2, y = pct, fill = Var1)) +
+    geom_bar(stat = "identity", position = "dodge") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+
+##WPRE
+df<-as.data.frame(table(merged_all$infected_WPRE, merged_all$orig.ident))
+
+# Add the population size of each sample
+df <- df %>%
+  mutate(pop = case_when(
+    Var2 == "CON_GFP1"   ~ 4852,
+    Var2 == "CON_GFP2"  ~ 2696,
+    Var2 == "CON_GFP3"   ~ 2891,
+    Var2 == "CON_OSK1"  ~ 6878,
+    Var2 == "CON_OSK2"   ~ 4653,
+    Var2 == "AD_GFP1"  ~ 5296,
+    Var2 == "AD_GFP2"   ~ 2904,
+    Var2 == "AD_GFP3"  ~ 2234,
+    Var2 == "AD_OSK1"   ~ 4749,
+    Var2 == "AD_OSK2"  ~ 2436,
+     Var2 == "AD_OSK3"   ~ 2998,
+    Var2 == "AD_OSK4"  ~ 3154,
+    TRUE                  ~ NA
+  ))
+#Get pct
+df$pct<-df$Freq/df$pop*100
+
+library(ggplot2)
+df %>%
+    ggplot(aes(x = Var2, y = pct, fill = Var1)) +
+    geom_bar(stat = "identity", position = "dodge") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+
+##All
+df<-as.data.frame(table(merged_all$infected, merged_all$orig.ident))
+
+# Add the population size of each sample
+df <- df %>%
+  mutate(pop = case_when(
+    Var2 == "CON_GFP1"   ~ 4852,
+    Var2 == "CON_GFP2"  ~ 2696,
+    Var2 == "CON_GFP3"   ~ 2891,
+    Var2 == "CON_OSK1"  ~ 6878,
+    Var2 == "CON_OSK2"   ~ 4653,
+    Var2 == "AD_GFP1"  ~ 5296,
+    Var2 == "AD_GFP2"   ~ 2904,
+    Var2 == "AD_GFP3"  ~ 2234,
+    Var2 == "AD_OSK1"   ~ 4749,
+    Var2 == "AD_OSK2"  ~ 2436,
+     Var2 == "AD_OSK3"   ~ 2998,
+    Var2 == "AD_OSK4"  ~ 3154,
+    TRUE                  ~ NA
+  ))
+#Get pct
+df$pct<-df$Freq/df$pop*100
+
+library(ggplot2)
+df %>%
+    ggplot(aes(x = Var2, y = pct, fill = Var1)) +
+    geom_bar(stat = "identity", position = "dodge") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+```
+
+###Per group
+```{r}
+##All
+merged_all$Group <- factor(merged_all$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
+
+df<-as.data.frame(table(merged_all$infected, merged_all$Group))
+
+# Add the population size of each sample
+df <- df %>%
+  mutate(pop = case_when(
+    Var2 == "CON_GFP"   ~ 10580,
+    Var2 == "AD_GFP"  ~ 10453,
+    Var2 == "AD_OSK"   ~ 13570,
+    TRUE                  ~ NA
+  ))
+#Get pct
+df$pct<-df$Freq/df$pop*100
+
+library(ggplot2)
+df %>%
+    ggplot(aes(x = Var2, y = pct, fill = Var1)) +
+    geom_bar(stat = "identity", position = "stack") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_infected_per_group.pdf", height = 10, width = 8, dpi=600)
+```
+
+###Per cell type
+```{r}
+##All
+merged_all$celltype <- factor(merged_all$celltype, levels = c("exc", "inh", "glia"))
+
+df<-as.data.frame(table(merged_all$infected, merged_all$celltype))
+
+# Add the population size of each sample
+df <- df %>%
+  mutate(pop = case_when(
+    Var2 == "exc"   ~ 17062,
+    Var2 == "inh"  ~ 4331,
+    Var2 == "glia"   ~ 13210,
+    TRUE                  ~ NA
+  ))
+#Get pct
+df$pct<-df$Freq/df$pop*100
+
+library(ggplot2)
+df %>%
+    ggplot(aes(x = Var2, y = pct, fill = Var1)) +
+    geom_bar(stat = "identity", position = "stack") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_infected_per_celltype.pdf", height = 10, width = 8, dpi=600)
+```
+
+###Total number per cell type
+```{r}
+merged_all$celltype <- factor(merged_all$celltype, levels = c("exc", "inh", "glia"))
+
+cellnumbers<-as.data.frame(table(merged_all$infected, merged_all$celltype))
+
+cellnumbers %>%
+    ggplot(aes(x = Var2, y = Freq, fill = Var1)) +
+    geom_bar(stat = "identity", position = "stack") +
+  theme_bw(base_size = 14) + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_1_composition_infected_per_celltype_totalnum.pdf", height = 10, width = 8, dpi=600)
+```
+
+```{r}
+save(merged_all,file="objects/3_RNA_1_obj_all_infect.Robj")
+```
+

@@ -1,0 +1,401 @@
+
+```{r setup, include=FALSE}
+.libPaths(c("/scratch/csierra/rstudio/R" ))
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+#Load packages
+```{r}
+library(tidyselect, lib.loc = "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1")
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+library(argparse)
+library(ChIPseeker)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(VennDiagram)
+library("readxl")
+library(GeneOverlap)
+library(ggpubr)
+library(scales)
+library(cocor)
+```
+
+#Load object with linked peaks called per condition
+```{r}
+load(file="/scratch/csierra/multiome_osk/objects/3_ATAC_X_LinkedPeaks.rds")
+DefaultAssay(obj_atac) <- "RNA"
+obj_atac <- JoinLayers(obj_atac)
+```
+#Check with linked peaks
+```{r}
+linked_all<-read.csv("/scratch/csierra/multiome_osk/LinkedPeaks_ALL.csv")
+```
+#1. 
+##Engram
+###Load RNA data
+```{r}
+#RNA
+wilRNA<-readRDS("./Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc01.rds")
+wilRNA<-wilRNA$exc
+##Sign
+wilRNA_sign_1<-subset(wilRNA, p_val_adj<0.05)
+```
+###Load ATAC data
+```{r}
+#All
+wilATAC_1_all<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_all.xlsx")
+
+#Significant
+wilATAC_1_sign<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+```
+###Select regions of interest
+```{r}
+#Only <150kb from TSS
+wilATAC_sign_150_1<-subset(wilATAC_1_sign, distanceToTSS<150000)
+wilATAC_sign_150_1<-subset(wilATAC_sign_150_1, distanceToTSS>(-150000))
+
+##Up
+wilRNA_sign_up_1<-subset(wilRNA_sign_1, avg_log2FC>0)
+wilATAC_sign_150_up_1<-subset(wilATAC_sign_150_1, avg_log2FC>0)
+wilATAC_1_sign_up<-subset(wilATAC_1_sign, avg_log2FC>0)
+
+##Down
+wilRNA_sign_down_1<-subset(wilRNA_sign_1, avg_log2FC<0)
+wilATAC_sign_150_down_1<-subset(wilATAC_sign_150_1, avg_log2FC<0)
+wilATAC_1_sign_dw<-subset(wilATAC_1_sign, avg_log2FC<0)
+```
+
+
+###Check RNA- ATAC correlation
+####Promoters
+```{r}
+wilRNA_sign_1$gene<-row.names(wilRNA_sign_1)
+names(wilATAC_1_all)[names(wilATAC_1_all) == 'gene_name'] <- 'gene'
+
+#Use all promoters
+## Name all the promoters together
+anno_wilATAC_promoters <- wilATAC_1_all %>%
+  mutate(annotation = trimws(gsub("\\(.*?\\)", "", annotation)))
+anno_wilATAC_promoters<-subset(anno_wilATAC_promoters, annotation=="Promoter")
+
+int<-left_join(wilRNA_sign_1, anno_wilATAC_promoters, by="gene", relationship = "one-to-many")
+
+#Get average values
+int_avg_1 <- int %>%
+  group_by(gene) %>%
+  summarise(across(c(avg_log2FC.x, avg_log2FC.y, p_val_adj.x, p_val_adj.y), mean))
+ggscatter(int_avg_1, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson") +
+  scale_y_continuous(labels = label_number(accuracy = 1))
+#ggsave("/scratch/csierra/multiome_osk/plots/4_integration_1_promoters.pdf", height = 5, width = 5, dpi=600)
+```
+
+
+####Linked Peaks
+```{r}
+wilATAC_1_all_min<-wilATAC_1_all[,c(11,13)]
+linked_DA<-inner_join(linked_all, wilATAC_1_all, by="query_region")
+colnames(linked_DA)[3] <- "gene"
+
+#Join with RNA DEG df
+wilRNA_sign_1$gene<-row.names(wilRNA_sign_1)
+int_1_linked<-left_join(wilRNA_sign_1, linked_DA, by="gene", relationship = "many-to-many")
+
+#Linked peaks located outside of promoters
+## Name all the promoters together
+int_1_linked_promoters <- int_1_linked %>%
+  mutate(annotation = trimws(gsub("\\(.*?\\)", "", annotation)))
+
+int_1_linked_nonp<-subset(int_1_linked_promoters, annotation!=c("Promoter")) 
+
+int_1_linked_nonp <- int_1_linked_nonp %>%
+  group_by(gene) %>%
+  summarise(across(c(avg_log2FC.x, avg_log2FC.y, p_val_adj.x, p_val_adj.y), mean))
+
+library("ggpubr")
+ggscatter(int_1_linked_nonp, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson") +
+  scale_y_continuous(labels = label_number(accuracy = 1))
+```
+
+#2. 
+##Engrams
+###Load RNA data
+```{r}
+#RNA
+wilRNA<-readRDS("./Analyses/RNA/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_DE_Engram.rds")
+wilRNA<-wilRNA$exc
+##Sign
+wilRNA_sign_2<-subset(wilRNA, p_val_adj<0.05)
+```
+
+###Load ATAC data
+```{r}
+#All
+wilATAC_2_all<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_all_Klf4.xlsx")
+
+#Significant
+wilATAC_2_sign<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_pval_0001.xlsx")
+```
+
+###Select regions of interest
+```{r}
+#Only <150kb from TSS
+wilATAC_sign_150_2<-subset(wilATAC_2_sign, distanceToTSS<150000)
+wilATAC_sign_150_2<-subset(wilATAC_sign_150_2, distanceToTSS>(-150000))
+
+##Up
+wilRNA_sign_up_2<-subset(wilRNA_sign_2, avg_log2FC>0)
+wilATAC_sign_150_up_2<-subset(wilATAC_sign_150_2, avg_log2FC>0)
+wilATAC_2_sign_up<-subset(wilATAC_2_sign, avg_log2FC>0)
+
+##Down
+wilRNA_sign_down_2<-subset(wilRNA_sign_2, avg_log2FC<0)
+wilATAC_sign_150_down_2<-subset(wilATAC_sign_150_2, avg_log2FC<0)
+wilATAC_2_sign_dw<-subset(wilATAC_2_sign, avg_log2FC<0)
+```
+
+###Check RNA- ATAC correlation
+####Promoters
+```{r}
+wilRNA_sign_2$gene<-row.names(wilRNA_sign_2)
+
+names(wilATAC_2_all)[names(wilATAC_2_all) == 'gene_name'] <- 'gene'
+
+#Use all promoters
+## Name all the promoters together
+anno_wilATAC_promoters <- wilATAC_2_all %>%
+  mutate(annotation = trimws(gsub("\\(.*?\\)", "", annotation)))
+anno_wilATAC_promoters<-subset(anno_wilATAC_promoters, annotation=="Promoter")
+
+int<-left_join(wilRNA_sign_2, anno_wilATAC_promoters, by="gene", relationship = "one-to-many")
+
+#Get average values
+int_avg_2 <- int %>%
+  group_by(gene) %>%
+  summarise(across(c(avg_log2FC.x, avg_log2FC.y, p_val_adj.x, p_val_adj.y), mean))
+ggscatter(int_avg_2, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson") +
+  scale_y_continuous(labels = label_number(accuracy = 1))
+```
+
+###Linked Peaks
+```{r}
+library(dplyr)
+wilATAC_2_all_min<-wilATAC_2_all[,c(11,13)]
+linked_DA<-inner_join(linked_all, wilATAC_2_all, by="query_region")
+colnames(linked_DA)[3] <- "gene"
+
+#Join with RNA DEG df
+wilRNA_sign_2$gene<-row.names(wilRNA_sign_2)
+int_2_linked<-left_join(wilRNA_sign_2, linked_DA, by="gene", relationship = "many-to-many")
+
+#Repeat with linked peaks located outside of promoters
+## Name all the promoters together
+int_2_linked_promoters <- int_2_linked %>%
+  mutate(annotation = trimws(gsub("\\(.*?\\)", "", annotation)))
+anno_wilATAC_promoters<-subset(anno_wilATAC_promoters, annotation=="Promoter")
+
+int_2_linked_nonp<-subset(int_2_linked_promoters, annotation!=c("Promoter")) 
+
+int_avg_2_linked_nonp <- int_2_linked_nonp %>%
+  group_by(gene) %>%
+  summarise(across(c(avg_log2FC.x, avg_log2FC.y, p_val_adj.x, p_val_adj.y), mean))
+
+library("ggpubr")
+ggscatter(int_avg_2_linked_nonp, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson") +
+  scale_y_continuous(labels = label_number(accuracy = 1))
+```
+
+
+##Compare correlations
+```{r}
+#Promoter
+int_avg_1<-as.data.frame(na.omit(int_avg_1))
+int_avg_2<-as.data.frame(na.omit(int_avg_2))
+
+int_avg_1$mode<-"one"
+int_avg_2$mode<-"two"
+
+int<-rbind(int_avg_1,int_avg_2)
+ggscatter(int, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", color = "mode", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          fullrange = TRUE,  ) +
+  stat_cor(aes(color=mode), label.x = 1)
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_promoters.pdf", height = 5, width = 5, dpi=600)
+
+cocor(~avg_log2FC.y + avg_log2FC.x | avg_log2FC.y + avg_log2FC.x,
+      data = list(int_avg_1, int_avg_2))
+
+#Linked outside promoters
+int_1_linked_nonp<-as.data.frame(na.omit(int_1_linked_nonp))
+int_avg_2_linked_nonp<-as.data.frame(na.omit(int_avg_2_linked_nonp))
+
+int_1_linked_nonp$mode<-"one"
+int_avg_2_linked_nonp$mode<-"two"
+
+int_linked<-rbind(int_1_linked_nonp,int_avg_2_linked_nonp)
+ggscatter(int_linked, x = "avg_log2FC.y", y = "avg_log2FC.x", 
+          add = "reg.line", color = "mode", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          fullrange = TRUE,  ) +
+  stat_cor(aes(color=mode), label.x = 0.5) + xlim(-1,1)
+
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_linked.pdf", height = 5, width = 5, dpi=600)
+
+cocor(~avg_log2FC.y + avg_log2FC.x | avg_log2FC.y + avg_log2FC.x,
+      data = list(int_1_linked_nonp, int_avg_2_linked_nonp))
+```
+
+###Check distribution of distance to TSS
+```{r}
+#bind two df of DARs
+wilATAC_sign_150_1$comparison<-"ADvCON"
+wilATAC_sign_150_2$comparison<-"ADvOSK"
+dist<-rbind(wilATAC_sign_150_1, wilATAC_sign_150_2)
+m1<-mean(wilATAC_sign_150_1$distanceToTSS)
+m2<-mean(wilATAC_sign_150_2$distanceToTSS)
+
+ggplot(dist, aes(x=distanceToTSS, colour=comparison)) + geom_density() +
+  geom_vline(xintercept = m1, colour="red", linetype="dotted") + geom_vline(xintercept = m2, colour="blue", linetype="dotted") +
+  theme(panel.background = element_blank())
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_TSSdist_all.pdf", height = 5, width = 5, dpi=600)
+
+mean(wilATAC_sign_150_1$distanceToTSS)
+sd(wilATAC_sign_150_1$distanceToTSS)
+
+mean(wilATAC_sign_150_2$distanceToTSS)
+sd(wilATAC_sign_150_2$distanceToTSS)
+
+#Only up
+wilATAC_sign_150_up_1$comparison<-"ADvCON"
+wilATAC_sign_150_up_2$comparison<-"ADvOSK"
+dist<-rbind(wilATAC_sign_150_up_1, wilATAC_sign_150_up_2)
+m1<-mean(wilATAC_sign_150_up_1$distanceToTSS)
+m2<-mean(wilATAC_sign_150_up_2$distanceToTSS)
+
+ggplot(dist, aes(x=distanceToTSS, colour=comparison)) + geom_density() +
+  geom_vline(xintercept = m1, colour="red", linetype="dotted") + geom_vline(xintercept = m2, colour="blue", linetype="dotted")+
+  theme(panel.background = element_blank())
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_TSSdist_up.pdf", height = 5, width = 5, dpi=600)
+
+mean(wilATAC_sign_150_up_1$distanceToTSS)
+sd(wilATAC_sign_150_up_1$distanceToTSS)
+
+mean(wilATAC_sign_150_up_2$distanceToTSS)
+sd(wilATAC_sign_150_up_2$distanceToTSS)
+
+#Only down
+wilATAC_sign_150_down_1$comparison<-"ADvCON"
+wilATAC_sign_150_down_2$comparison<-"ADvOSK"
+dist<-rbind(wilATAC_sign_150_down_1, wilATAC_sign_150_down_2)
+m1<-mean(wilATAC_sign_150_down_1$distanceToTSS)
+m2<-mean(wilATAC_sign_150_down_2$distanceToTSS)
+
+ggplot(dist, aes(x=distanceToTSS, colour=comparison)) + geom_density() +
+  geom_vline(xintercept = m1, colour="red", linetype="dotted") + geom_vline(xintercept = m2, colour="blue", linetype="dotted")+
+  theme(panel.background = element_blank())
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_TSSdist_dw.pdf", height = 5, width = 5, dpi=600)
+
+mean(wilATAC_sign_150_down_1$distanceToTSS)
+sd(wilATAC_sign_150_down_1$distanceToTSS)
+mean(wilATAC_sign_150_down_2$distanceToTSS)
+sd(wilATAC_sign_150_down_2$distanceToTSS)
+```
+
+#Look for nice example of rescue
+```{r}
+onetwo<-na.omit(inner_join(int_1, int_2, by="query_region", relationship = "many-to-many"))
+onetwo_sign<-subset(onetwo, p_val.y.x < 0.01 | p_val.y.y<0.01)
+onetwo_sub<-onetwo_sign[,c(8,15,20,49)]
+
+##Transform dataframe to GRanges acceptable format
+row_names <- onetwo_sub$query_region
+split_names <- strsplit(row_names, "-")
+onetwo_sub$seqnames <- sapply(split_names, `[`, 1)
+onetwo_sub$start <- sapply(split_names, `[`, 2)
+onetwo_sub$end <- sapply(split_names, `[`, 3)
+onetwo_sub<-unique(onetwo_sub)
+onetwo_sub$ID <- seq.int(nrow(onetwo_sub))
+row.names(onetwo_sub)<-onetwo_sub$ID 
+granges <- GenomicRanges::makeGRangesFromDataFrame(onetwo_sub[,c(5:7)])
+
+```
+
+#Plot example
+```{r}
+DefaultAssay(obj_atac)<-"peaks_celltypes_group"
+Idents(obj_atac)<-"Celltype_infected_group"
+obj_atac$Celltype_infected_group <- factor(obj_atac$Celltype_infected_group, levels = c("exc_Pos_CON_GFP", "exc_Pos_AD_GFP", "exc_Pos_AD_OSK"))
+
+#Kcnj3
+p1 <- CoveragePlot(
+  object = obj_atac,
+  region = "chr2-55450537-55451272",
+  features = "Kcnj3",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 20000,
+  extend.downstream = 10000,
+  region.highlight = granges[4]
+)
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Kcnj3.pdf", height = 5, width = 7, dpi=600, plot=p1)
+
+#Nav3
+p2 <- CoveragePlot(
+  object = obj_atac,
+  region = "Nav3",
+  features = "Nav3",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 10000,
+  extend.downstream = 10000,
+  region.highlight = granges[5:6]
+)
+
+#Cdh7
+p3 <- CoveragePlot(
+  object = obj_atac,
+  region = "Cdh7",
+  features = "Cdh7",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 100000,
+  extend.downstream = 100000,
+  region.highlight = granges[11:12]
+)
+
+#Nav3
+p4 <- CoveragePlot(
+  object = obj_atac,
+  region = "Cdh7",
+  features = "Cdh7",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 100000,
+  extend.downstream = 100000
+)
+
+#Prnp: example of rescue upon OSK indep of chromatin
+p5 <- CoveragePlot(
+  object = obj_atac,
+  region = "Prnp",
+  features = "Prnp",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 1000,
+  extend.downstream = 1000,
+)
+
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Prnp.pdf", height = 5, width = 7, dpi=600, plot=p4)
+```

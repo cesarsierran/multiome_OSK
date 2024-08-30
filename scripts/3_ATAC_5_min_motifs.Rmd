@@ -1,0 +1,268 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+.libPaths("/scratch/csierra/rstudio/R")
+```
+
+#Load packages
+```{r}
+library(tidyselect, lib.loc = "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1")
+library(fastmap)
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+library(argparse)
+library(ggplot2)
+library(gprofiler2)
+library(stringr)
+library(cowplot)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(patchwork)
+library(readxl)
+library(ComplexHeatmap)
+```
+#Load object with peaks called per condition
+```{r}
+#With Oct4::Sox2 footprint
+load(file="/scratch/csierra/multiome_osk/objects/3_ATAC_5_min_footprint_3.rds")
+```
+###Motif enrichment
+```{r}
+# Get a list of motif position frequency matrices from the JASPAR database
+pfm <- getMatrixSet(
+  x = JASPAR2020,
+  opts = list(collection = "CORE", tax_group = 'vertebrates', all_versions = FALSE)
+)
+
+# add motif information
+obj_atac_min <- AddMotifs(
+  object = obj_atac_min,
+  genome = BSgenome.Mmusculus.UCSC.mm10,
+  pfm = pfm
+)
+```
+
+#Define peaks that are open in Exc neurons. This will be later used for choosing a set of background peaks
+```{r}
+Idents(obj_atac_min)<-obj_atac_min$celltype
+open.peaks <- AccessiblePeaks(obj_atac_min, idents = c("exc"))
+```
+
+#1. CON_GFP v AD_GFP 
+##Engram cells
+```{r}
+## Load DA
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_noCON_OSK.rds")
+
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(wil, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc) 
+
+# exc
+wil.de.exc<-wil.de$exc
+wil.de.exc_up<-subset(wil.de.exc, avg_log2FC>0)
+```
+###Motif enrichment
+```{r}
+#Motif enrichment using DA up top 100 peaks
+wil.de.exc_up_top<-wil.de.exc_up[1:100,]
+da.peak <- rownames(wil.de.exc_up_top)
+
+## match the overall GC content in the peak set
+meta.feature <- GetAssayData(obj_atac_min, assay = "peaks_celltypes_group", layer = "meta.features")
+peaks.matched <- MatchRegionStats(
+  meta.feature = meta.feature[open.peaks, ],
+  query.feature = meta.feature[da.peak, ],
+  n = 10000
+)
+
+enriched.motifs_AD_GFP_CON_GFP <- FindMotifs(
+  object = obj_atac_min,
+  features = da.peak,
+  background=peaks.matched)
+```
+
+
+#2. AD_OSK v AD_GFP 
+##Engram cells
+```{r}
+## Load DA
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_noCON_OSK.rds")
+
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(wil, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc) 
+
+#Include closest feature
+##exc
+wil.de.exc<-wil.de$exc
+wil.de.exc_up<-subset(wil.de.exc, avg_log2FC>0)
+```
+
+###Motif enrichment
+```{r}
+#Motif enrichment using DA up top 100 peaks
+wil.de.exc_up_top<-wil.de.exc_up[1:100,]
+da.peak <- rownames(wil.de.exc_up_top)
+
+## match the overall GC content in the peak set
+meta.feature <- GetAssayData(obj_atac_min, assay = "peaks_celltypes_group", layer = "meta.features")
+peaks.matched <- MatchRegionStats(
+  meta.feature = meta.feature[open.peaks, ],
+  query.feature = meta.feature[da.peak, ],
+  n = 10000
+)
+
+enriched.motifs_AD_OSK_AD_GFP <- FindMotifs(
+  object = obj_atac_min,
+  features = da.peak,
+  background=peaks.matched)
+```
+#MotifPlot
+```{r}
+#Plot motifs of interest
+motifsoi<-c("KLF4", "POU5F1", "SOX2", "Pou5f1::Sox2")
+mf<-MotifPlot(
+  object = obj_atac_min,
+  motifs = motifsoi)
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_motifplot.pdf", height = 5, width = 10, dpi=600,plot=mf)
+```
+
+#Build heatmap
+```{r}
+enriched.motifs_AD_OSK_AD_GFP$comparison<-"AD_OSK_AD_GFP"
+enriched.motifs_AD_OSK_AD_GFP$logp<-log10(enriched.motifs_AD_OSK_AD_GFP$p.adjust)*-1
+enriched.motifs_AD_OSK_AD_GFP_min<-enriched.motifs_AD_OSK_AD_GFP[,c(6,8,11)]
+
+enriched.motifs_AD_GFP_CON_GFP$comparison<-"AD_GFP_CON_GFP"
+enriched.motifs_AD_GFP_CON_GFP$logp<-log10(enriched.motifs_AD_GFP_CON_GFP$p.adjust)*-1
+enriched.motifs_AD_GFP_CON_GFP_min<-enriched.motifs_AD_GFP_CON_GFP[,c(6,8,11)]
+
+
+motifs_df<-full_join(enriched.motifs_AD_OSK_AD_GFP_min, enriched.motifs_AD_GFP_CON_GFP_min, by="motif.name")
+
+ms <- c("KLF4", "SOX2", "POU5F1", "Pou5f1::Sox2")
+
+motids_df <- motifs_df[motifs_df$motif.name %in% ms, ]
+
+row.names(motids_df)<-motids_df$motif.name
+motids_df_logp<-motids_df[,c(3,5)]
+motids_df_logp<-as.matrix(motids_df_logp)
+#Order levels
+row.names(motids_df_logp) <- factor(row.names(motids_df_logp), levels = c("KLF4", "SOX2", "POU5F1", "Pou5f1::Sox2"))
+
+
+heat<-Heatmap(motids_df_logp, cluster_rows = F, cluster_columns = F)
+#ggsave("/scratch/csierra/multiome_osk/plots/motifs_heatmap_Klf4.pdf", height = 10, width = 10, dpi=600,plot=heat)
+```
+
+#Plot of FC
+```{r}
+library(tidyr)
+motifs_long<-pivot_longer(motids_df, names_to="fold", cols = c("fold.enrichment.x", "fold.enrichment.y"))
+
+fc<-ggplot(motifs_long, aes(x = fold, y = value, size = value)) +
+  geom_point() +
+  scale_size_continuous(name = "Size") +
+  theme_minimal() +
+  labs(title = "Scatter Plot with Point Sizes Corresponding to Column 'size'")
+
+ggsave("/scratch/csierra/multiome_osk/plots/FC_motifs_heatmap.pdf", height = 10, width = 12, dpi=600,plot=fc)
+```
+
+#Compute motif activity
+```{r}
+obj_atac_min$Group <- factor(obj_atac_min$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
+
+mouse_brain <- RunChromVAR(
+  object = obj_atac_min,
+  genome = BSgenome.Mmusculus.UCSC.mm10
+)
+
+DefaultAssay(mouse_brain) <- 'chromvar'
+Idents(mouse_brain)<-"Group"
+  
+motifsDE_AD_OSK_AD_GFP<-FindMarkers(
+  object = mouse_brain,
+  ident.1 = 'AD_OSK',
+  ident.2 = 'AD_GFP',
+  only.pos = FALSE,
+  logfc.threshold = 0,
+  mean.fxn = rowMeans,
+  fc.name = "avg_diff",
+  test.use="LR",
+  latent.vars=c("Batch"))
+
+motifsDE_AD_OSK_AD_GFP$motif<-row.names(motifsDE_AD_OSK_AD_GFP)
+
+
+motifsDE_AD_OSK_CON_GFP<-FindMarkers(
+  object = mouse_brain,
+  ident.1 = 'AD_OSK',
+  ident.2 = 'CON_GFP',
+  only.pos = FALSE,
+  logfc.threshold = 0,
+  mean.fxn = rowMeans,
+  fc.name = "avg_diff",
+  test.use="LR",
+  latent.vars=c("Batch"))
+
+motifsDE_AD_OSK_CON_GFP$motif<-row.names(motifsDE_AD_OSK_CON_GFP)
+
+motifsDE_AD_GFP_CON_GFP<-FindMarkers(
+  object = mouse_brain,
+  ident.1 = 'AD_GFP',
+  ident.2 = 'CON_GFP',
+  only.pos = FALSE,
+  logfc.threshold = 0,
+  mean.fxn = rowMeans,
+  fc.name = "avg_diff",
+  test.use="LR",
+  latent.vars=c("Batch"))
+
+motifsDE_AD_GFP_CON_GFP$motif<-row.names(motifsDE_AD_GFP_CON_GFP)
+
+#Klf4 very sign, Sox2 close. Others not. 
+
+MotifPlot(
+  object = mouse_brain,
+  motifs = head(rownames(motifsDE)),
+  assay = 'peaks'
+)
+
+#Klf4
+p2<-VlnPlot(mouse_brain, 
+        features="MA0039.4", pt.size = 0)+ geom_boxplot() & ggtitle("Klf4")
+#Sox2
+p3<-VlnPlot(mouse_brain, 
+        features="MA0143.4", pt.size = 0)+ geom_boxplot() & ggtitle("Sox2")
+#Pou5f1
+p4<-VlnPlot(mouse_brain, 
+        features="MA1115.1", pt.size = 0)+ geom_boxplot() & ggtitle("Pou5f1")
+#Pou5f1::Sox2
+p5<-VlnPlot(mouse_brain, 
+        features="MA0142.1", pt.size = 0) + geom_boxplot() & ggtitle("Pou5f1::Sox2") 
+
+motifact<-p2|p3|p4|p5
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_motifact.pdf", height = 5, width = 11, dpi=600,plot=motifact)
+```
+
+```{r}
+p3 <- PlotFootprint(obj_atac_min, features = c("KLF4", "SOX2", "POU5F1", "Pou5f1::Sox2"), group.by = "Group", show.expected = F)
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_footprint_inpeaks.pdf", height = 5, width = 5, dpi=600,plot=p3)
+```
+

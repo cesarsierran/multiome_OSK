@@ -1,0 +1,95 @@
+```{r setup, include=FALSE}
+.libPaths(c("/scratch/csierra/rstudio/R"))
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+#Load packages
+```{r}
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+#library(hdf5r)
+library(SingleCellExperiment)
+library(SeuratWrappers)
+library(harmony)
+```
+
+#Load object 
+```{r}
+load(file="/scratch/csierra/multiome_osk/objects/2_obj_all_ATAC_RNA_QC.Robj")
+```
+
+#Normalization and linear dimensional reduction
+```{r}
+preprocess <- function(object, n.lsi = 10, res=0.2){
+  
+  ## Filter peaks which are detected in < 10 cells
+  tmp <- Matrix::rowSums(object[['ATAC']]@counts > 0)
+  object[['ATAC']] <- subset(object[['ATAC']], features = names(which(tmp >= 10)))
+  
+  
+  ## Normalization, dimensional reduction, and clustering on ATAC-seq
+  
+  # ATAC-seq
+  DefaultAssay(object) <- "ATAC"
+  object <- RunTFIDF(object, method = 3)
+  object <- FindTopFeatures(object, min.cutoff = 'q75')
+  object <- RunSVD(object)
+  object <- RunHarmony(object, group.by.vars="Batch", reduction.use='lsi', assay.use='peaks', project.dim = FALSE) 
+  object <- RunUMAP(object, reduction = 'harmony', dims = 2:n.lsi, assay = 'ATAC',
+                    reduction.name = "umap.atac", reduction.key = "atacUMAP_")
+  object <- FindNeighbors(object, reduction = 'lsi', dims = 2:n.lsi, assay = 'ATAC')
+  object <- FindClusters(object, graph.name = 'ATAC_snn', algorithm = 3, resolution = res)
+  
+  return(object)
+}
+
+obj_atac = preprocess(merged_all_atac, n.lsi = 20, res=0.4)
+rm(merged_all_atac)
+
+#With 10 lsi, no batch effect seen (but DAMs not clearly separated). With 20 yes. --> RunHarmony
+DimPlot(obj_atac, label=T)
+```
+# Weighted nearest neighbor (WNN) analysis using both modalities
+```{r}
+wnn_reduction <- function(object, n.pc = 35, n.lsi = 20){
+  
+  # Weighted nearest neighbor (WNN) analysis using both modalities
+  object <- FindMultiModalNeighbors(object,
+                                    reduction.list = list("pca", "harmony"),
+                                    dims.list = list(1:n.pc, 2:n.lsi),
+                                    modality.weight.name = 'RNA.weight')
+  object <- RunUMAP(object, nn.name = "weighted.nn", 
+                    reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+  object <- FindClusters(object, graph.name = "wsnn", algorithm = 3, verbose = FALSE, resolution = 0.2)
+
+  return(object)
+  
+}
+
+obj_atac = wnn_reduction(obj_atac)
+
+DimPlot(obj_atac, reduction='wnn.umap', label=T, group.by = "Batch")
+```
+
+#Plot WNN
+```{r}
+wnn<-DimPlot(obj_atac, reduction='wnn.umap', label=T, group.by = "RNA_ABAsc") + NoLegend() + ggtitle(NULL)
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_1_WNN_DimPlot.pdf", height = 10, width = 10, dpi=600,plot=wnn)
+
+umap_atac<-DimPlot(obj_atac, label=T, group.by = "RNA_ABAsc") + NoLegend() + ggtitle(NULL)
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_1_atac_DimPlot_byABAsc.pdf", height = 10, width = 10, dpi=600,plot=umap_atac)
+
+
+umap_atac<-DimPlot(obj_atac, label=T, group.by = "Group") + NoLegend() + ggtitle(NULL)
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_1_atac_DimPlot_byGroup.pdf", height = 10, width = 10, dpi=600,plot=umap_atac)
+
+```
+
+#save object
+```{r}
+save(obj_atac,file="/scratch/csierra/multiome_osk/objects/3_ATAC_1_obj_all.Robj")
+```

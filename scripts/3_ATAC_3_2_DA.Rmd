@@ -1,0 +1,1340 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+.libPaths("/scratch/csierra/rstudio/R")
+```
+
+
+#Load packages
+```{r}
+library(tidyselect, lib.loc = "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1")
+library(ggplot2)
+library(fastmap)
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(Signac)
+library(irlba)
+library(gprofiler2)
+library(stringr)
+library(cowplot)
+library(ggrepel)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(patchwork)
+library(readxl)
+library(VennDiagram)
+library(GeneOverlap)
+```
+#Load object with peaks called per condition
+```{r}
+load(file="/scratch/csierra/multiome_osk/objects/3_ATAC_2_peaks_geneact.rds")
+```
+
+#Define general functions
+```{r}
+################################################################################
+## Volcanoplot
+################################################################################
+getVolcanos2 <- function(i, results, threshold=th) {
+  comp <- names(results[i])
+  res <- data.frame(results[[i]])
+
+  ## Assign Directionality
+  res$diffexpressed <- "NO"
+  res$diffexpressed[res$avg_log2FC > fc & res$p_val < pval] <- paste(">",fc,sep =" ")
+  res$diffexpressed[res$avg_log2FC < -fc & res$p_val < pval] <- paste("<",-fc,sep =" ")
+  ##Add gene info
+  res$genes<-row.names(res)
+  
+  # Calculate mean and standard deviation
+  avg <- mean(res$avg_log2FC)
+  sd <- 3*sd(res$avg_log2FC)
+  th<-avg+sd
+
+  ## Build Plot
+  ggplot(data=res,aes(x=avg_log2FC, y=-log10(p_val), col=diffexpressed)) +
+    geom_point() +
+    theme_classic() +
+    theme(panel.border = element_rect(colour = "black", fill=NA, size=1.5),
+	  text = element_text(size=14, family = "Helvetica"),
+	  axis.ticks.y = element_line(size = 0.8, color = "black"),
+	  axis.text.y = element_text(size = 12,color = "black"),
+	  axis.text.x = element_text(size = 12,color = "black"),
+	  legend.position = "none",
+	  legend.background = element_blank()) +
+    labs(title = comp,
+	 x = expression("log"[2]*'FC') ,
+	 y = expression("-log"[10]*italic("(P")*" value)")) +
+    geom_vline(xintercept=c(-fc, fc), col="grey") +
+    geom_hline(yintercept=-log10(pval),col ="grey") +
+    guides(color = guide_legend(override.aes = list(size=3))) +
+    annotate(geom = "text", x = min(res$avg_log2FC), y = max(-log10(res$p_val)), 
+	     label = paste("n =",sum(res$p_val <= pval & res$avg_log2FC <= -fc)),
+	     hjust = 0.2, vjust = 3, size = 4) +
+    annotate(geom = "text", x = max(res$avg_log2FC), y = max(-log10(res$p_val)), 
+	     label = paste("n =",sum(res$p_val <= pval & res$avg_log2FC >= fc)),
+	     hjust = 0.8, vjust = 3, size = 4)+
+   geom_text_repel(
+    data = subset(res, -log10(p_val)>50 | (avg_log2FC>threshold |avg_log2FC<(-threshold))),
+    aes(label = gene_name),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines"))  
+}
+
+##############################################################################
+## My Volcanoplot
+##############################################################################
+myvolcano <- function(results, y, x) {
+  
+  ## Assign Directionality
+  results$diffexpressed <- "NO"
+  results$diffexpressed[results$avg_log2FC > fc & results$p_val < pval] <- "YES"
+  results$diffexpressed[results$avg_log2FC < -fc & results$p_val < pval] <- "YES"
+  
+  ## Plot
+  ggplot(results, aes(x=avg_log2FC, y=logp, label=gene_name)) +
+  geom_point(aes(col=diffexpressed),size=2) +
+  scale_y_continuous(trans = "log1p", limits=c(3,y)) +
+  theme_bw(base_size = 14)+
+   geom_text_repel(
+    data = subset(results, logp>20 & (avg_log2FC>0.4 |avg_log2FC<0.4)),
+    aes(label = gene_name),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) +
+    guides(color = guide_legend(override.aes = list(size=3))) +
+    annotate(geom = "text", x = min(results$avg_log2FC), y = max(-log10(results$p_val)), 
+	     label = paste("n =",sum(results$p_val <= pval & results$avg_log2FC <= -fc)),
+	     hjust = 0.2, vjust = 3, size = 4) +
+  ylab("-log10(p.adj)") + xlab("log2FC") + theme(legend.position="none") +
+  geom_hline(yintercept=3) + geom_vline(xintercept=0.25) + geom_vline(xintercept=(-0.25)) + xlim(-x,x)
+}
+```
+
+#1. CON_GFP v AD_GFP 
+##Cell types
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_celltype.rds")
+```
+
+```{r}
+# Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(wil, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+
+# Include closest feature
+##exc
+wil.de.exc<-wil.de$exc
+wil.de.exc$query_region<-row.names(wil.de.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$exc))
+wil.de.exc<-full_join(wil.de.exc, cf, by="query_region")
+ 
+##inh
+wil.de.inh<-wil.de$inh
+wil.de.inh$query_region<-row.names(wil.de.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$inh))
+wil.de.inh<-full_join(wil.de.inh, cf, by="query_region")
+
+##glia
+wil.de.glia<-wil.de$glia
+wil.de.glia$query_region<-row.names(wil.de.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$glia))
+wil.de.glia<-full_join(wil.de.glia, cf, by="query_region")
+
+##Get universe to use shinyGO
+universe_AD_CON_GFP_exc<-as.data.frame(rownames(wil$exc))
+# writexl::write_xlsx(universe_AD_CON_GFP_exc,
+#  		    path = "./Analyses/ATAC/1_AD_GFPvCON_GFP/universe_AD_CON_GFP_Types_exc.xlsx")
+```
+
+###Annotate peaks with ChIPseeker
+```{r}
+#Exc
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.de.exc$start <- sapply(split_names, `[`, 2)
+wil.de.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_1 <- as.data.frame(annotatePeak(as(wil.de.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene))
+
+## Remove info in brackets except for promoters
+remove_text_in_parentheses <- function(text) {
+  pattern <- "\\(.*?\\)"
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_1 <- anno_exc_1 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#inh
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.de.inh$start <- sapply(split_names, `[`, 2)
+wil.de.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh_1 <- annotatePeak(as(wil.de.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh_1 <- as.data.frame(anno_inh_1)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh_1 <- anno_inh_1 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#glia
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.de.glia$start <- sapply(split_names, `[`, 2)
+wil.de.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia_1 <- annotatePeak(as(wil.de.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia_1 <- as.data.frame(anno_glia_1)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia_1 <- anno_glia_1 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_1, inh=anno_inh_1, glia=anno_glia_1)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_celltype_p_val_0001.xlsx")
+#Volcanoplot
+volPlots <- lapply(seq(1:length(list)), getVolcanos2, list)
+names(volPlots) <- names(list)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+save_plot(plot=plot, file = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_celltype_volcano.pdf", base_width=15, base_height=8)
+
+```
+
+
+##Engram cells
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams.rds")
+```
+
+###Annotate all peaks with ChIPseeker
+```{r}
+#Include closest feature
+##exc
+wil.exc<-wil$exc
+wil.exc$query_region<-row.names(wil.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$exc))
+wil.exc<-full_join(wil.exc, cf, by="query_region")
+ 
+##inh
+wil.inh<-wil$inh
+wil.inh$query_region<-row.names(wil.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$inh))
+wil.inh<-full_join(wil.inh, cf, by="query_region")
+
+##glia
+wil.glia<-wil$glia
+wil.glia$query_region<-row.names(wil.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$glia))
+wil.glia<-full_join(wil.glia, cf, by="query_region")
+
+#Annotate peaks
+#Exc
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.exc$start <- sapply(split_names, `[`, 2)
+wil.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_engram_1 <- annotatePeak(as(wil.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_exc_engram_1 <- as.data.frame(anno_exc_engram_1)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_engram_1 <- anno_exc_engram_1 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#inh
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.inh$start <- sapply(split_names, `[`, 2)
+wil.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh <- annotatePeak(as(wil.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh <- as.data.frame(anno_inh)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh <- anno_inh %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#glia
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.glia$start <- sapply(split_names, `[`, 2)
+wil.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia <- annotatePeak(as(wil.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia <- as.data.frame(anno_glia)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia <- anno_glia %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_engram_1, inh=anno_inh, glia=anno_glia)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_all.xlsx")
+
+```
+
+###Select only significant
+```{r}
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(list, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+#writexl::write_xlsx(wil.de, path = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+
+#Volcanoplot
+volPlots <- lapply(seq(1:length(wil.de)), getVolcanos2, wil.de, threshold=0.5)
+names(volPlots) <- names(wil.de)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+#save_plot(plot=plot, file = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_volcano.pdf", base_width=15, base_height=8)
+
+#For pie chart
+anno_exc_engram_1<-wil.de$exc
+```
+
+#2. AD_OSK v AD_GFP 
+##Cell types
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_celltype.rds")
+```
+
+```{r}
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(wil, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+#Include closest feature
+##exc
+wil.de.exc<-wil.de$exc
+wil.de.exc$query_region<-row.names(wil.de.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$exc))
+wil.de.exc<-full_join(wil.de.exc, cf, by="query_region")
+ 
+##inh
+wil.de.inh<-wil.de$inh
+wil.de.inh$query_region<-row.names(wil.de.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$inh))
+wil.de.inh<-full_join(wil.de.inh, cf, by="query_region")
+
+##glia
+wil.de.glia<-wil.de$glia
+wil.de.glia$query_region<-row.names(wil.de.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$glia))
+wil.de.glia<-full_join(wil.de.glia, cf, by="query_region")
+
+#Universe
+universe_AD_OSK_AD_GFP_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_OSK_AD_GFP_exc,
+		    path = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_GFPvAD_OSK_universe_exc.xlsx")
+```
+
+###Annotate peaks with ChIPseeker
+```{r}
+#Excitatory
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.de.exc$start <- sapply(split_names, `[`, 2)
+wil.de.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_2 <- annotatePeak(as(wil.de.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_exc_2 <- as.data.frame(anno_exc_2)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_2 <- anno_exc_2 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Inhibitory
+
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.de.inh$start <- sapply(split_names, `[`, 2)
+wil.de.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh_2 <- annotatePeak(as(wil.de.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh_2 <- as.data.frame(anno_inh_2)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh_2 <- anno_inh_2 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Non-Neuron
+
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.de.glia$start <- sapply(split_names, `[`, 2)
+wil.de.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia_2 <- annotatePeak(as(wil.de.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia_2 <- as.data.frame(anno_glia_2)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia_2 <- anno_glia_2 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_2, inh=anno_inh_2, glia=anno_glia_2)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_celltype_pval_0001.xlsx")
+
+#Volcanoplot
+volPlots <- lapply(seq(1:length(list)), getVolcanos2, list, threshold=0.5)
+names(volPlots) <- names(list)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+save_plot(plot=plot, file = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_celltype_volcano.pdf", base_width=15, base_height=8)
+ 
+```
+
+
+
+
+##Engram cells
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams.rds")
+```
+###Annotate all peaks with ChIPseeker
+```{r}
+#Include closest feature
+##Excitatory
+wil.exc<-wil$exc
+wil.exc$query_region<-row.names(wil.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$exc))
+wil.exc<-full_join(wil.exc, cf, by="query_region")
+ 
+##Inhibitory
+wil.inh<-wil$inh
+wil.inh$query_region<-row.names(wil.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$inh))
+wil.inh<-full_join(wil.inh, cf, by="query_region")
+
+##Non-Neuron
+wil.glia<-wil$glia
+wil.glia$query_region<-row.names(wil.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$glia))
+wil.glia<-full_join(wil.glia, cf, by="query_region")
+
+#Annotate peaks
+#Excitatory
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.exc$start <- sapply(split_names, `[`, 2)
+wil.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_engram_2 <- annotatePeak(as(wil.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_exc_engram_2 <- as.data.frame(anno_exc_engram_2)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_engram_2 <- anno_exc_engram_2 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Inhibitory
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.inh$start <- sapply(split_names, `[`, 2)
+wil.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh <- annotatePeak(as(wil.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh <- as.data.frame(anno_inh)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh <- anno_inh %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Non-Neuron
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.glia$start <- sapply(split_names, `[`, 2)
+wil.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia <- annotatePeak(as(wil.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia <- as.data.frame(anno_glia)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia <- anno_glia %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_engram_2, inh=anno_inh, glia=anno_glia)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_all.xlsx")
+```
+
+###Select only significant
+```{r}
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(list, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+#writexl::write_xlsx(wil.de, path = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_pval_0001.xlsx")
+
+#Volcanoplot
+volPlots <- lapply(seq(1:length(wil.de)), getVolcanos2, wil.de, threshold=0.5)
+names(volPlots) <- names(wil.de)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+#save_plot(plot=plot, file = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_GFPvCON_GFP_engrams_volcano.pdf", base_width=15, base_height=8)
+
+#For pie chart
+anno_exc_engram_2<-wil.de$exc
+```
+
+#3
+##Cell types
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_da_celltypes.rds")
+```
+
+```{r}
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(wil, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+#Include closest feature
+##exc
+wil.de.exc<-wil.de$exc
+wil.de.exc$query_region<-row.names(wil.de.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$exc))
+wil.de.exc<-full_join(wil.de.exc, cf, by="query_region")
+ 
+##inh
+wil.de.inh<-wil.de$inh
+wil.de.inh$query_region<-row.names(wil.de.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$inh))
+wil.de.inh<-full_join(wil.de.inh, cf, by="query_region")
+
+##glia
+wil.de.glia<-wil.de$glia
+wil.de.glia$query_region<-row.names(wil.de.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil.de$glia))
+wil.de.glia<-full_join(wil.de.glia, cf, by="query_region")
+
+#Universe
+universe_AD_OSK_AD_GFP_exc<-as.data.frame(rownames(wil.de$exc))
+writexl::write_xlsx(universe_AD_OSK_AD_GFP_exc,
+		    path = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_universe_exc.xlsx")
+```
+
+###Annotate peaks with ChIPseeker
+```{r}
+#Exc
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.de.exc$start <- sapply(split_names, `[`, 2)
+wil.de.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_3 <- annotatePeak(as(wil.de.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_exc_3 <- as.data.frame(anno_exc_3)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_3 <- anno_exc_3 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#inh
+
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.de.inh$start <- sapply(split_names, `[`, 2)
+wil.de.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh_3 <- annotatePeak(as(wil.de.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh_3 <- as.data.frame(anno_inh_3)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh_3 <- anno_inh_3 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#glia
+
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.de.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.de.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.de.glia$start <- sapply(split_names, `[`, 2)
+wil.de.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia_3 <- annotatePeak(as(wil.de.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia_3 <- as.data.frame(anno_glia_3)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia_3 <- anno_glia_3 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_3, inh=anno_inh_3, glia=anno_glia_3)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_celltype_pval_0001.xlsx")
+
+#Volcanoplot
+volPlots <- lapply(seq(1:length(list)), getVolcanos2, list, threshold=0.5)
+names(volPlots) <- names(list)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+save_plot(plot=plot, file = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_celltype_volcano.pdf", base_width=15, base_height=8)
+ 
+```
+
+##Engram cells
+###Load DA
+```{r}
+load("/scratch/csierra/multiome_osk/Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_da_engrams.rds")
+```
+###Annotate all peaks with ChIPseeker
+```{r}
+#Include closest feature
+##exc
+wil.exc<-wil$exc
+wil.exc$query_region<-row.names(wil.exc)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$exc))
+wil.exc<-full_join(wil.exc, cf, by="query_region")
+ 
+##inh
+wil.inh<-wil$inh
+wil.inh$query_region<-row.names(wil.inh)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$inh))
+wil.inh<-full_join(wil.inh, cf, by="query_region")
+
+##glia
+wil.glia<-wil$glia
+wil.glia$query_region<-row.names(wil.glia)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil$glia))
+wil.glia<-full_join(wil.glia, cf, by="query_region")
+
+#Annotate peaks
+#Exc
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.exc$query_region
+split_names <- strsplit(row_names, "-")
+wil.exc$seqnames <- sapply(split_names, `[`, 1)
+wil.exc$start <- sapply(split_names, `[`, 2)
+wil.exc$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_exc_engram_3 <- annotatePeak(as(wil.exc,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_exc_engram_3 <- as.data.frame(anno_exc_engram_3)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_exc_engram_3 <- anno_exc_engram_3 %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#inh
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.inh$query_region
+split_names <- strsplit(row_names, "-")
+wil.inh$seqnames <- sapply(split_names, `[`, 1)
+wil.inh$start <- sapply(split_names, `[`, 2)
+wil.inh$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_inh <- annotatePeak(as(wil.inh,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_inh <- as.data.frame(anno_inh)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_inh <- anno_inh %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#glia
+##Transform dataframe to GRanges acceptable format
+row_names <- wil.glia$query_region
+split_names <- strsplit(row_names, "-")
+wil.glia$seqnames <- sapply(split_names, `[`, 1)
+wil.glia$start <- sapply(split_names, `[`, 2)
+wil.glia$end <- sapply(split_names, `[`, 3)
+
+#Annotate peaks with ChIPseeker
+anno_glia <- annotatePeak(as(wil.glia,"GRanges"), TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_glia <- as.data.frame(anno_glia)
+
+## Remove info in brackets except for promoters
+# Function to remove text within parentheses except those starting with "Promoter"
+remove_text_in_parentheses <- function(text) {
+  # Pattern to match parentheses and their contents
+  pattern <- "\\(.*?\\)"
+  # Replace the matched pattern with an empty string
+  str_replace_all(text, pattern, "")
+}
+
+anno_glia <- anno_glia %>%
+  mutate(annotation = ifelse(str_detect(annotation, "^Promoter"), 
+                              annotation, 
+                              remove_text_in_parentheses(annotation)))
+
+#Combine dataframes into list
+list<-list(exc=anno_exc_engram_3, inh=anno_inh, glia=anno_glia)
+
+list<-lapply(list, function(x) {
+  x<-x %>% mutate(DE=case_when(
+  avg_log2FC > 0 ~ "Up",
+  avg_log2FC < 0 ~ "Down"))
+})
+  
+writexl::write_xlsx(list, path = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_engrams_all.xlsx")
+```
+
+###Select only significant
+```{r}
+## Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+# Remove NS genes
+wil.de<-lapply(list, subset, p_val <= pval) 
+wil.de<-lapply(wil.de, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+
+writexl::write_xlsx(wil.de, path = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_engrams_pval_0001.xlsx")
+
+#Volcanoplot
+volPlots <- lapply(seq(1:length(wil.de)), getVolcanos2, wil.de, threshold=0.5)
+names(volPlots) <- names(wil.de)
+
+plot<-cowplot::plot_grid(plotlist = volPlots, nrow = 2)
+save_plot(plot=plot, file = "./Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_engrams_volcano.pdf", base_width=15, base_height=8)
+
+#For pie chart
+anno_exc_engram_3<-wil.de$exc
+```
+
+#Stacked barplots
+##Load datasets
+```{r}
+#Engrams
+anno_exc_engram_1<-read_xlsx(path = "./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+
+anno_exc_engram_2<-read_xlsx(path = "./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_pval_0001.xlsx")
+
+```
+
+##All
+```{r}
+occurences_1<-as.data.frame(table(unlist(anno_exc_engram_1$annotation)))
+occurences_2<-as.data.frame(table(unlist(anno_exc_engram_2$annotation)))
+
+occurences_1$orig<-"one"
+occurences_1$Freq2<-occurences_1$Freq/1619*100
+
+occurences_2$orig<-"two"
+occurences_2$Freq2<-occurences_2$Freq/744*100
+
+cellcomp_df<-rbind(occurences_1, occurences_2)
+cellcomp_df$orig <- factor(cellcomp_df$orig, levels = c("one", "two"))
+
+ggplot(cellcomp_df, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_DARdistr_up.pdf", height = 10, width = 8, dpi=600)
+```
+
+##Split up and down
+```{r}
+#Up
+anno_exc_engram_1_up<-subset(anno_exc_engram_1, avg_log2FC>0)
+occurences_1_up<-table(unlist(anno_exc_engram_1_up$annotation))
+occurences_1_up<-as.data.frame(occurences_1_up)
+
+anno_exc_engram_2_up<-subset(anno_exc_engram_2, avg_log2FC>0)
+occurences_2_up<-table(unlist(anno_exc_engram_2_up$annotation))
+occurences_2_up<-as.data.frame(occurences_2_up)
+
+#Dw
+anno_exc_engram_1_dw<-subset(anno_exc_engram_1, avg_log2FC<0)
+occurences_1_dw<-table(unlist(anno_exc_engram_1_dw$annotation))
+occurences_1_dw<-as.data.frame(occurences_1_dw)
+
+anno_exc_engram_2_dw<-subset(anno_exc_engram_2, avg_log2FC<0)
+occurences_2_dw<-table(unlist(anno_exc_engram_2_dw$annotation))
+occurences_2_dw<-as.data.frame(occurences_2_dw)
+```
+
+```{r}
+#Up
+occurences_1_up$orig<-"one"
+occurences_1_up$Freq2<-occurences_1_up$Freq/716*100
+
+occurences_2_up$orig<-"two"
+occurences_2_up$Freq2<-occurences_2_up$Freq/389*100
+
+cellcomp_df<-rbind(occurences_1_up, occurences_2_up)
+cellcomp_df$orig <- factor(cellcomp_df$orig, levels = c("one", "two"))
+
+ggplot(cellcomp_df, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_DARdistr_up.pdf", height = 10, width = 8, dpi=600)
+
+#Dw
+occurences_1_dw$orig<-"one"
+occurences_1_dw$Freq2<-occurences_1_dw$Freq/903*100
+
+occurences_2_dw$orig<-"two"
+occurences_2_dw$Freq2<-occurences_2_dw$Freq/355*100
+
+cellcomp_df<-rbind(occurences_1_dw, occurences_2_dw)
+cellcomp_df$orig <- factor(cellcomp_df$orig, levels = c("one", "two"))
+
+ggplot(cellcomp_df, aes(fill=Var1, y=Freq2, x=orig)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw() + scale_y_continuous(expand = c(0, 0))
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_DARdistr_dw.pdf", height = 10, width = 8, dpi=600)
+
+```
+
+#Check if there is rescue of DARs in lineplot
+##Lineplot
+```{r}
+#1 significant
+wilATAC_1_sign<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+
+#3 all
+wilATAC_3_all<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_engrams_all.xlsx")
+
+resc<-left_join(wilATAC_1_sign, wilATAC_3_all, by="query_region")
+resc<-na.omit(resc[,c(7,11,35)])
+
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+
+ggplot(resc_long_WT, aes(x = name, y = log2FC, group=query_region)) + geom_line() +
+  theme_minimal()
+
+#Split up and down
+#DW
+resc<-left_join(wilATAC_1_sign, wilATAC_3_all, by="query_region")
+resc<-subset(resc, resc$avg_log2FC.x<0)
+resc<-resc[,c(7,11,35)]
+resc<-resc[complete.cases(resc), ]
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+avg_values <- aggregate(log2FC ~ name, data = resc_long_WT, FUN = mean)
+
+plot<-ggplot(resc_long_WT, aes(x = name, y = log2FC, group=query_region)) + geom_line() + geom_line(data = avg_values, aes(group = 1), color = "red", size=2) +
+  theme_minimal()
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_rescue_lineplot_dw.pdf", height = 10, width = 8, dpi=600, plot=plot)
+
+
+#UP
+resc<-left_join(wilATAC_1_sign, wilATAC_3_all, by="query_region")
+resc<-subset(resc, resc$avg_log2FC.x>0)
+resc<-resc[,c(7,11,35)]
+resc<-resc[complete.cases(resc), ]
+resc_long<-pivot_longer(resc, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+WT<-resc_long
+WT$name<-"WT"
+WT$log2FC<-0
+WT<-unique(WT)
+resc_long_WT<-rbind(resc_long, WT)
+#Lineplot
+resc_long_WT$name <- factor(resc_long_WT$name, levels = c("WT", "avg_log2FC.x", "avg_log2FC.y"))
+avg_values <- aggregate(log2FC ~ name, data = resc_long_WT, FUN = mean)
+
+plot<-ggplot(resc_long_WT, aes(x = name, y = log2FC, group=query_region)) + geom_line() + geom_line(data = avg_values, aes(group = 1), color = "red", size=2) +
+  theme_minimal()
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_rescue_lineplot_up.pdf", height = 10, width = 8, dpi=600, plot=plot)
+
+```
+###Check stats of rescue 
+```{r}
+#1 significant
+wilATAC_1_sign<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+
+#3 all
+wilATAC_3_all<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/3_AD_OSKvCON_GFP/AD_OSKvCON_GFP_engrams_all.xlsx")
+
+#DW
+resc<-left_join(wilATAC_1_sign, wilATAC_3_all, by="query_region")
+rescdw<-subset(resc, resc$avg_log2FC.x<0)
+rescdw<-rescdw[,c(7,11,35)]
+rescdw<-rescdw[complete.cases(rescdw), ]
+resc_longdw<-pivot_longer(rescdw, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+
+t.test(log2FC ~ name, paired = TRUE, data = resc_longdw)
+
+
+#UP
+resc<-left_join(wilATAC_1_sign, wilATAC_3_all, by="query_region")
+rescup<-subset(resc, resc$avg_log2FC.x>0)
+rescup<-rescup[,c(7,11,35)]
+rescup<-rescup[complete.cases(rescup), ]
+
+resc_longup<-pivot_longer(rescup, cols=c(avg_log2FC.x,avg_log2FC.y), values_to="log2FC")
+t.test(log2FC ~ name, paired = TRUE, data = resc_longup)
+
+```
+
+
+
+#VennDiagram of rescued peaks
+```{r}
+#Check background size
+uni1<-as.data.frame(rownames(wil1$exc))
+colnames(uni1)<-"region"
+uni2<-as.data.frame(rownames(wil2$exc))
+colnames(uni2)<-"region"
+uni<-unique(rbind(uni1,uni2))
+
+#Taking DEGs between AD and CON GFP engram
+DARs_AD_CON_GFP<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams_pval_0001.xlsx")
+
+#Taking DEGs between AD_OSK and AD_GFP engram
+DARs_AD_OSKvAD_GFP<-read_excel("/scratch/csierra/multiome_osk/Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams_pval_0001.xlsx")
+
+#Check overlap
+##UpDown
+DARs_AD_CON_GFP_up<-subset(DARs_AD_CON_GFP, DE=="Up")
+DARs_AD_OSKvAD_GFP_down<-subset(DARs_AD_OSKvAD_GFP, DE=="Down")
+
+DARs_1_up<-DARs_AD_CON_GFP_up$query_region
+DARs_2_down<-DARs_AD_OSKvAD_GFP_down$query_region
+
+venn.plot <- venn.diagram(x = list("A"=DARs_1_up, "B"= DARs_2_down), NULL, fill=c("darkmagenta", "darkblue"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("DEGs_1_up", "DEGs_2_down"), cat.pos=0, na="remove")
+grid.draw(venn.plot, recording=FALSE)
+
+go.obj <- testGeneOverlap(newGeneOverlap(DARs_1_up, DARs_2_down, genome.size=101863))
+go.obj
+
+##DownUp
+DARs_AD_CON_GFP_down<-subset(DARs_AD_CON_GFP, DE=="Down")
+DARs_AD_OSKvAD_GFP_up<-subset(DARs_AD_OSKvAD_GFP, DE=="Up")
+
+DARs_1_down<-DARs_AD_CON_GFP_down$query_region
+DARs_2_up<-DARs_AD_OSKvAD_GFP_up$query_region
+
+venn.plot <- venn.diagram(x = list("A"=DARs_1_down, "B"= DARs_2_up), NULL, fill=c("darkmagenta", "darkblue"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("DEGs_1_down", "DEGs_2_up"), cat.pos=0, na="remove")
+grid.draw(venn.plot, recording=FALSE)
+
+go.obj <- testGeneOverlap(newGeneOverlap(DARs_1_down, DARs_2_up, genome.size=101863))
+go.obj
+```
+
+
+#Volcanoplots
+```{r}
+# Define thresholds
+fc <- 0.25
+pval <- 0.001
+
+#1 Types
+load("./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_celltype.rds")
+# Remove NS genes
+wil<-lapply(wil, subset, p_val <= pval) 
+wil<-lapply(wil, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+wil_1_Types<-wil
+
+#Exc
+wil_1_Types_Exc<-wil_1_Types$exc
+wil_1_Types_Exc$query_region<-row.names(wil_1_Types_Exc)
+wil_1_Types_Exc$logp<- -log10(wil_1_Types_Exc$p_val)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil_1_Types_Exc))
+wil_1_Types_Exc<-full_join(wil_1_Types_Exc, cf, by="query_region")
+#Inh
+wil_1_Types_Inh<-wil_1_Types$inh
+wil_1_Types_Inh$query_region<-row.names(wil_1_Types_Inh)
+wil_1_Types_Inh$logp<- -log10(wil_1_Types_Inh$p_val)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil_1_Types_Inh))
+wil_1_Types_Inh<-full_join(wil_1_Types_Inh, cf, by="query_region")
+#Glia
+wil_1_Types_Glia<-wil_1_Types$glia
+wil_1_Types_Glia$query_region<-row.names(wil_1_Types_Glia)
+wil_1_Types_Glia$logp<- -log10(wil_1_Types_Glia$p_val)
+cf<-ClosestFeature(obj_atac, regions = rownames(wil_1_Types_Glia))
+wil_1_Types_Glia<-full_join(wil_1_Types_Glia, cf, by="query_region")
+
+
+#1 Engrams
+load("./Analyses/ATAC/1_AD_GFPvCON_GFP/AD_GFPvCON_GFP_engrams.rds")
+# Remove NS genes
+wil<-lapply(wil, subset, p_val <= pval) 
+wil<-lapply(wil, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+wil_1_Engrams<-wil
+#Exc
+wil_1_Engrams_Exc<-wil_1_Engrams$exc
+wil_1_Engrams_Exc$query_region<-row.names(wil_1_Engrams_Exc)
+wil_1_Engrams_Exc$logp<- -log10(wil_1_Engrams_Exc$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_1_Engrams_Exc))
+wil_1_Engrams_Exc<-full_join(wil_1_Engrams_Exc, cf, by="query_region")
+#Inh
+wil_1_Engrams_Inh<-wil_1_Engrams$inh
+wil_1_Engrams_Inh$query_region<-row.names(wil_1_Engrams_Inh)
+wil_1_Engrams_Inh$logp<- -log10(wil_1_Engrams_Inh$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_1_Engrams_Inh))
+wil_1_Engrams_Inh<-full_join(wil_1_Engrams_Inh, cf, by="query_region")
+#Glia
+wil_1_Engrams_Glia<-wil_1_Engrams$glia
+wil_1_Engrams_Glia$query_region<-row.names(wil_1_Engrams_Glia)
+wil_1_Engrams_Glia$logp<- -log10(wil_1_Engrams_Glia$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_1_Engrams_Glia))
+wil_1_Engrams_Glia<-full_join(wil_1_Engrams_Glia, cf, by="query_region")
+
+#2 Types
+load("./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_celltype.rds")
+# Remove NS genes
+wil<-lapply(wil, subset, p_val <= pval) 
+wil<-lapply(wil, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+wil_2_Types<-wil
+#Exc
+wil_2_Types_Exc<-wil_2_Types$exc
+wil_2_Types_Exc$query_region<-row.names(wil_2_Types_Exc)
+wil_2_Types_Exc$logp<- -log10(wil_2_Types_Exc$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Types_Exc))
+wil_2_Types_Exc<-full_join(wil_2_Types_Exc, cf, by="query_region")
+#Inh
+wil_2_Types_Inh<-wil_2_Types$inh
+wil_2_Types_Inh$query_region<-row.names(wil_2_Types_Inh)
+wil_2_Types_Inh$logp<- -log10(wil_2_Types_Inh$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Types_Inh))
+wil_2_Types_Inh<-full_join(wil_2_Types_Inh, cf, by="query_region")
+#Glia
+wil_2_Types_Glia<-wil_2_Types$glia
+wil_2_Types_Glia$query_region<-row.names(wil_2_Types_Glia)
+wil_2_Types_Glia$logp<- -log10(wil_2_Types_Glia$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Types_Glia))
+wil_2_Types_Glia<-full_join(wil_2_Types_Glia, cf, by="query_region")
+
+#2 Engrams
+load("./Analyses/ATAC/2_AD_OSKvAD_GFP/AD_OSKvAD_GFP_engrams.rds")
+# Remove NS genes
+wil<-lapply(wil, subset, p_val <= pval) 
+wil<-lapply(wil, subset, avg_log2FC >= fc | avg_log2FC<(-fc)) 
+wil_2_Engrams<-wil
+#Exc
+wil_2_Engrams_Exc<-wil_2_Engrams$exc
+wil_2_Engrams_Exc$query_region<-row.names(wil_2_Engrams_Exc)
+wil_2_Engrams_Exc$logp<- -log10(wil_2_Engrams_Exc$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Engrams_Exc))
+wil_2_Engrams_Exc<-full_join(wil_2_Engrams_Exc, cf, by="query_region")
+#Inh
+wil_2_Engrams_Inh<-wil_2_Engrams$inh
+wil_2_Engrams_Inh$query_region<-row.names(wil_2_Engrams_Inh)
+wil_2_Engrams_Inh$logp<- -log10(wil_2_Engrams_Inh$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Engrams_Inh))
+wil_2_Engrams_Inh<-full_join(wil_2_Engrams_Inh, cf, by="query_region")
+#Glia
+wil_2_Engrams_Glia<-wil_2_Engrams$glia
+wil_2_Engrams_Glia$query_region<-row.names(wil_2_Engrams_Glia)
+wil_2_Engrams_Glia$logp<- -log10(wil_2_Engrams_Glia$p_val)
+cf<-ClosestFeature(obj_atac, regions = row.names(wil_2_Engrams_Glia))
+wil_2_Engrams_Glia<-full_join(wil_2_Engrams_Glia, cf, by="query_region")
+```
+
+#Volcanoplots
+```{r, eval=F}
+fc <- 0.25
+pval <- 0.001
+#1
+p1_exc<-myvolcano(wil_1_Types_Exc, y=80, x=4)
+p1_inh<-myvolcano(wil_1_Types_Inh, y=80, x=4)
+p1_glia<-myvolcano(wil_1_Types_Glia, y=80, x=6)
+
+p1<- p1_exc | p1_inh | p1_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_p1Types_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p1)
+
+p1_exc<-myvolcano(wil_1_Engrams_Exc, y=133, x=4.4)
+p1_inh<-myvolcano(wil_1_Engrams_Inh, y=133, x=6)
+p1_glia<-myvolcano(wil_1_Engrams_Glia, y=133, x=12.1)
+
+p1<- p1_exc | p1_inh | p1_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_p1Engrams_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p1)
+
+#2
+p2_exc<-myvolcano(wil_2_Types_Exc, y=165, x=3.5)
+p2_inh<-myvolcano(wil_2_Types_Inh, y=165, x=5)
+p2_glia<-myvolcano(wil_2_Types_Glia, y=165, x=1.5)
+
+p2<- p2_exc | p2_inh | p2_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_p2Types_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p2)
+
+p2_exc<-myvolcano(wil_2_Engrams_Exc, y=204, x=5)
+p2_inh<-myvolcano(wil_2_Engrams_Inh, y=204, x=6)
+p2_glia<-myvolcano(wil_2_Engrams_Glia, y=204, x=12)
+
+p2<- p2_exc | p2_inh | p2_glia
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_4_p2Engrams_Volcano.pdf", height = 5, width = 15, dpi=600, plot = p2)
+```
