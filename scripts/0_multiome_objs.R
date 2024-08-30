@@ -10,7 +10,7 @@
 
 #Reference paper: https://www.science.org/doi/10.1126/sciadv.adg3754
 
-setwd("/scratch/csierra/Gaby")
+setwd("/scratch/csierra/multiome_osk")
 
 library(Seurat)
 library(dplyr)
