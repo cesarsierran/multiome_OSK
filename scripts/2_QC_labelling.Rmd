@@ -167,10 +167,6 @@ obj_all_oligop <- AddMetaData(obj_all_oligop, metadata = "glia", col.name = "cel
 
 merged_all <- merge(obj_all_exc, y = c(obj_all_inh, obj_all_glia,obj_all_oligop,obj_all_DAMs), add.cell.ids = c("exc", "inh", "glia","oligop","DAMs"), project = "pfc", merge.dr="TRUE")
 
-#Trick to avoid joinlayers issue:
-merged_all<-subset(merged_all, seurat_clusters=="19" &
-                  RNA_ABAsc=="DAM", invert=TRUE)
-
 Idents(merged_all)<-merged_all$RNA_ABAsc
 DimPlot(merged_all, label=T)
 ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_ABAsc.pdf", height = 10, width = 15, dpi=600)
@@ -185,7 +181,6 @@ CW3SL_pos <- WhichCells(merged_all, expression = CW3SL > 0)
 pos<-c(WPRE_pos,CW3SL_pos)
 
 merged_all$infected<- ifelse(colnames(merged_all) %in% pos, "Pos", "Neg")
-table(merged_all$infected, merged_all$orig.ident)
 save(merged_all,file="2_obj_all_RNA_QC.rds")
 load("objects/2_obj_all_RNA_QC.rds")
 ```
@@ -212,7 +207,7 @@ inf_celltype$freq2<-inf_celltype$Freq/num_celltype$Freq
 DefaultAssay(merged_all)<-"ATAC"
 
 #Visualize parameters before filtering
-#DensityScatter(merged_all, x = 'nucleosome_signal', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
+DensityScatter(merged_all, x = 'nucleosome_signal', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
 
 VlnPlot(
   object = merged_all,
@@ -243,6 +238,7 @@ merged_all_atac <- subset(
 save(merged_all_atac,file="/scratch/csierra/multiome_osk/objects/2_obj_all_ATAC_RNA_QC.rds")
 load("/scratch/csierra/multiome_osk/objects/2_obj_all_ATAC_RNA_QC.rds")
 ```
+
 #Plot ATAC QC after filter
 ```{r}
 merged_all_atac$Group <- factor(merged_all_atac$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
