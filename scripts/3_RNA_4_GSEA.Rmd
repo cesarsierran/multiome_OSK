@@ -20,8 +20,6 @@ library(plotly)
 #Get gene set
 ```{r}
 gs <- geneset::getGO(org = "mouse",ont =c("bp"))
-#ALT
-#load("mouse_H_v5.RData")
 ```
 
 #Read DEGs
@@ -167,7 +165,7 @@ p <- ggplot(gse_rbind_top, aes(x=comp, y = Description)) +
 
 p + facet_grid(.~celltype)
 
-#Cherry pick - 2 per group
+#Pick 2 examples  per group
 gse_rbind_cherry<-gse_rbind
 gse_rbind_cherry$Description <- factor(gse_rbind_cherry$Description, levels = c("ribosome assembly","cytoplasmic translation", "positive regulation of cell killing","cell killing", "positive regulation of T cell mediated immunity","positive regulation of adaptive immune response", "endothelial cell differentiation","tissue remodeling","homophilic cell adhesion via plasma membrane adhesion molecules", "heterophilic cell-cell adhesion via plasma membrane cell adhesion molecules","regulation of presynapse organization", "regulation of presynapse assembly"))
 
