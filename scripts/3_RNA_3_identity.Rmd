@@ -1,0 +1,153 @@
+
+```{r setup, include=FALSE}
+.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+## Packages
+```{r packages}
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+library(Signac)
+library(irlba)
+library(SingleR)
+library(Rmisc)
+```
+
+##load object
+```{r}
+load("objects/3_RNA_1_obj_all_infect_noCON_OSK.rds")
+DefaultAssay(merged_all) <- "RNA"
+merged_all <- JoinLayers(merged_all)
+```
+
+#Subset exc, as this is the main infected population
+```{r}
+merged_all$Group <- factor(merged_all$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
+
+exc<-subset(merged_all, celltype=="exc")
+exc_CON_GFP<-subset(exc, Group=="CON_GFP")
+exc_AD_OSK<-subset(exc, Group=="AD_OSK")
+exc_AD_GFP<-subset(exc, Group=="AD_GFP")
+
+exc_pos<-subset(exc, infected=="Pos")
+
+L2_3_pos<-subset(exc_pos, RNA_ABAsc=="L2/3 IT CTX")
+L4_5_pos<-subset(exc_pos, RNA_ABAsc=="L4/5 IT CTX")
+L5_pos<-subset(exc_pos, RNA_ABAsc=="L5 IT CTX")
+L5_PT_pos<-subset(exc_pos, RNA_ABAsc=="L5 PT CTX")
+L5_6_pos<-subset(exc_pos, RNA_ABAsc=="L5/6 NP CTX")
+L6_pos<-subset(exc_pos, RNA_ABAsc=="L6 CT CTX")
+L6_IT_pos<-subset(exc_pos, RNA_ABAsc=="L6 IT CTX")
+L6b_pos<-subset(exc_pos, RNA_ABAsc=="L6b CTX")
+
+```
+
+
+```{r}
+#Positives between groups
+VlnPlot(
+  object = exc_pos,
+  features = "RNA_identity_score",
+  ncol = 1,
+  pt.size = 0,
+  split.by = "Group",
+  group.by = "RNA_ABAsc"
+)+
+  geom_boxplot()
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_identity_byABAsc.pdf", height = 10, width = 15, dpi=600)
+
+VlnPlot(
+  object = exc_pos,
+  features = "RNA_identity_score",
+  ncol = 1,
+  pt.size = 0,
+  group.by = "Group",
+)+
+  geom_boxplot() + ylim(0.22,0.71)
+
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_identity_all.pdf", height = 10, width = 5, dpi=600)
+```
+
+#Stats
+##All
+```{r}
+#Between groups in positive cells 
+identity<-exc_pos@meta.data
+
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+```
+
+##Check in subtypes
+```{r}
+#L2/3
+identity<-L2_3_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L4/5
+identity<-L4_5_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L5
+identity<-L5_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L5PT
+identity<-L5_PT_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L56
+identity<-L5_6_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L6
+identity<-L6_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L6 IT
+identity<-L6_IT_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#L6 IT
+identity<-L6b_pos@meta.data
+###ANOVA
+arc.aov <- aov(RNA_identity_score ~ Group, data = identity)
+summary(arc.aov)
+###Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+```
