@@ -28,10 +28,6 @@ merged_all <- JoinLayers(merged_all)
 merged_all$Group <- factor(merged_all$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
 
 exc<-subset(merged_all, celltype=="exc")
-exc_CON_GFP<-subset(exc, Group=="CON_GFP")
-exc_AD_OSK<-subset(exc, Group=="AD_OSK")
-exc_AD_GFP<-subset(exc, Group=="AD_GFP")
-
 exc_pos<-subset(exc, infected=="Pos")
 
 L2_3_pos<-subset(exc_pos, RNA_ABAsc=="L2/3 IT CTX")
@@ -42,7 +38,6 @@ L5_6_pos<-subset(exc_pos, RNA_ABAsc=="L5/6 NP CTX")
 L6_pos<-subset(exc_pos, RNA_ABAsc=="L6 CT CTX")
 L6_IT_pos<-subset(exc_pos, RNA_ABAsc=="L6 IT CTX")
 L6b_pos<-subset(exc_pos, RNA_ABAsc=="L6b CTX")
-
 ```
 
 
