@@ -96,7 +96,7 @@ ggscatter(int_avg_1, x = "avg_log2FC.y", y = "avg_log2FC.x",
 ```
 
 
-####Linked Peaks
+####Linked Peaks outside promoters
 ```{r}
 wilATAC_1_all_min<-wilATAC_1_all[,c(11,13)]
 linked_DA<-inner_join(linked_all, wilATAC_1_all, by="query_region")
@@ -186,7 +186,7 @@ ggscatter(int_avg_2, x = "avg_log2FC.y", y = "avg_log2FC.x",
   scale_y_continuous(labels = label_number(accuracy = 1))
 ```
 
-###Linked Peaks
+###Linked Peaks outside promoters
 ```{r}
 library(dplyr)
 wilATAC_2_all_min<-wilATAC_2_all[,c(11,13)]
@@ -313,26 +313,7 @@ mean(wilATAC_sign_150_down_2$distanceToTSS)
 sd(wilATAC_sign_150_down_2$distanceToTSS)
 ```
 
-#Look for nice example of rescue
-```{r}
-onetwo<-na.omit(inner_join(int_1, int_2, by="query_region", relationship = "many-to-many"))
-onetwo_sign<-subset(onetwo, p_val.y.x < 0.01 | p_val.y.y<0.01)
-onetwo_sub<-onetwo_sign[,c(8,15,20,49)]
-
-##Transform dataframe to GRanges acceptable format
-row_names <- onetwo_sub$query_region
-split_names <- strsplit(row_names, "-")
-onetwo_sub$seqnames <- sapply(split_names, `[`, 1)
-onetwo_sub$start <- sapply(split_names, `[`, 2)
-onetwo_sub$end <- sapply(split_names, `[`, 3)
-onetwo_sub<-unique(onetwo_sub)
-onetwo_sub$ID <- seq.int(nrow(onetwo_sub))
-row.names(onetwo_sub)<-onetwo_sub$ID 
-granges <- GenomicRanges::makeGRangesFromDataFrame(onetwo_sub[,c(5:7)])
-
-```
-
-#Plot example
+#Plot examples of rescue
 ```{r}
 DefaultAssay(obj_atac)<-"peaks_celltypes_group"
 Idents(obj_atac)<-"Celltype_infected_group"
@@ -351,43 +332,8 @@ p1 <- CoveragePlot(
 )
 ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Kcnj3.pdf", height = 5, width = 7, dpi=600, plot=p1)
 
-#Nav3
-p2 <- CoveragePlot(
-  object = obj_atac,
-  region = "Nav3",
-  features = "Nav3",
-  expression.assay = "RNA",
-  idents = ids,
-  extend.upstream = 10000,
-  extend.downstream = 10000,
-  region.highlight = granges[5:6]
-)
-
-#Cdh7
-p3 <- CoveragePlot(
-  object = obj_atac,
-  region = "Cdh7",
-  features = "Cdh7",
-  expression.assay = "RNA",
-  idents = ids,
-  extend.upstream = 100000,
-  extend.downstream = 100000,
-  region.highlight = granges[11:12]
-)
-
-#Nav3
-p4 <- CoveragePlot(
-  object = obj_atac,
-  region = "Cdh7",
-  features = "Cdh7",
-  expression.assay = "RNA",
-  idents = ids,
-  extend.upstream = 100000,
-  extend.downstream = 100000
-)
-
 #Prnp: example of rescue upon OSK indep of chromatin
-p5 <- CoveragePlot(
+p2 <- CoveragePlot(
   object = obj_atac,
   region = "Prnp",
   features = "Prnp",
@@ -397,5 +343,5 @@ p5 <- CoveragePlot(
   extend.downstream = 1000,
 )
 
-ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Prnp.pdf", height = 5, width = 7, dpi=600, plot=p4)
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Prnp.pdf", height = 5, width = 7, dpi=600, plot=p2)
 ```
