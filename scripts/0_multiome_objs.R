@@ -8,8 +8,6 @@
 #SBATCH --no-requeue
 #SBATCH --mem=320GB
 
-#Reference paper: https://www.science.org/doi/10.1126/sciadv.adg3754
-
 setwd("/scratch/csierra/multiome_osk")
 
 library(Seurat)
@@ -53,8 +51,6 @@ grange.counts <- StringToGRanges(rownames(atac_counts), sep = c(":", "-"))
 grange.use <- seqnames(grange.counts) %in% standardChromosomes(grange.counts)
 atac_counts <- atac_counts[as.vector(grange.use), ]
 
-# Get gene annotations for GRCm38 - This part is done locally because it was not working in cluster
-# Still not working: maybe contact helpdesk
 annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
 annotations <- renameSeqlevels(annotations, mapSeqlevels(seqlevels(annotations), "UCSC"))
 genome(annotations) <- "GRCm38"
@@ -68,9 +64,9 @@ seu[["ATAC"]] <- CreateChromatinAssay(
   annotation = annotations
 )
 
-##Quality control
+#Quality control
 
-# ATAC - calculate parameters
+# calculate parameters
 DefaultAssay(seu) <- "ATAC"
 seu <- NucleosomeSignal(seu)
 seu <- TSSEnrichment(seu)
