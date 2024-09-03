@@ -57,15 +57,5 @@ obj_atac <- RunTFIDF(obj_atac, method = 3)
 obj_atac <- FindTopFeatures(obj_atac, min.cutoff = 'q75')
 
 
-
-#Recall geneactivity based on peaks called in each cell type
-######## Calculate gene activity ########
-DefaultAssay(obj_atac) <- 'peaks_celltypes_group'
-gene.activities <- GeneActivity(obj_atac)
-#
-obj_atac[['GeneActivity']]<- CreateAssayObject(counts = gene.activities)
-obj_atac <- NormalizeData(obj_atac, assay = 'GeneActivity')
-
 #save object
 save(obj_atac,file="/scratch/csierra/multiome_osk/objects/3_ATAC_2_peaks_geneact.rds")
-
