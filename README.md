@@ -13,7 +13,11 @@ Code used for the manuscript "Cognitive rejuvenation through partial reprogrammi
 - ```3_ATAC_6_LinkPeaks.R```: Signac Peak linking to genes in the dataset
 - ```3_RNA_1_composition.Rmd```: cell types visualization and compositional analysis
 - ```3_RNA_2_DE.Rmd```: Differential expression analysis
-- ```3_RNA_3_GSEA.Rmd```: GSEA analysis
+- ```3_RNA_3_GSEA.Rmd```: Gene Set Enrichment Analysis
 - ```3_RNA_3_identity.Rmd```: Identity score comparison between groups
+- ```3_RNA_4_pseudotime.Rmd```: Monocle pseudotime analysis based on engram and AD DEGs
+- ```3_RNA_5_CHEA3.Rmd```: TF enrichment analysis of downregulated genes
 - ```4_integration.Rmd```: Integration analyses, including RNA-ATAC correlations
 - ```scCODA.py```: compositional analysis using ths scCODA package
+
+The transcriptional landscapes from Figure S7 can be visualized [here]([https://pages.github.com/](https://cesarsierra.shinyapps.io/multiome_shiny/)).
