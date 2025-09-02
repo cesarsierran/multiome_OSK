@@ -20,4 +20,4 @@ Code used for the manuscript "Cognitive rejuvenation through partial reprogrammi
 - ```4_integration.Rmd```: Integration analyses, including RNA-ATAC correlations
 - ```scCODA.py```: compositional analysis using ths scCODA package
 
-The transcriptional landscapes from Figure S7 can be visualized [here]([https://pages.github.com/](https://cesarsierra.shinyapps.io/multiome_shiny/)).
+The transcriptional landscapes from Figure S7 can be visualized [here]([https://pages.github.com/](https://cesarsierra.shinyapps.io/multiome_shiny/)).[here](https://pages.github.com/](https://cesarsierra.shinyapps.io/multiome_shiny/))
