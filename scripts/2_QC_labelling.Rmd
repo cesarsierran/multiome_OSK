@@ -1,35 +1,31 @@
 ---
-title: "2_QC"
+title: "2. QC"
+author: "Cesar Sierra"
 output: html_document
 date: "2024-04-09"
 ---
 
-```{r setup, include=FALSE}
-.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,
+  warning = F,
+  message = F
+)
 knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
 ```
 
-#Load packages
-```{r}
-library(ggplot2)
-library(Seurat)
-library(dplyr)
-library(Signac)
-library(irlba)
+```{r packages, include = FALSE}
+lapply(c("ggplot2","Seurat", "dplyr", "Signac", "irlba"),
+       library, character.only = T, verbose = F)
 ```
 
-#Load object with merged samples
-```{r}
+```{r Load object with merged samples}
 load(file="/scratch/csierra/multiome_osk/objects/1_obj_all.rda")
 DefaultAssay(obj_all)<-"RNA"
 obj_all <- JoinLayers(obj_all)
-```
-#Remove CON OSK
-```{r}
-obj_all<-subset(obj_all, Group!="CON_OSK")
-save(obj_all,file="/scratch/csierra/multiome_osk/objects/1_obj_all.rds")
-load("/scratch/csierra/multiome_osk/objects/1_obj_all.rds")
 ```
 
 #QC filter - RNA
@@ -45,6 +41,7 @@ obj_all<- subset(
     nFeature_RNA > 200 &
     percMT_RNA < 2)
 ```
+
 #Analysis without integration. Normalization clustering.
 ```{r}
 obj_all <- NormalizeData(obj_all)
@@ -59,6 +56,7 @@ DimPlot(obj_all, label = T)
 #ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP.pdf", height = 10, width = 15, dpi=600)
 
 ```
+
 #Check for Batch effects and Group differences
 ```{r}
 obj_all$Group <- factor(obj_all$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
@@ -70,10 +68,10 @@ VlnPlot(
   ncol = 3,
   group.by = "Batch"
 )
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_QC_byBatch.pdf", height = 10, width = 15, dpi=600)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_QC_byBatch.pdf", height = 10, width = 15, dpi=600)
 
 DimPlot(obj_all, label = T, group.by = "Batch")
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byBatch.pdf", height = 10, width = 15, dpi=600)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byBatch.pdf", height = 10, width = 15, dpi=600)
 
 #By Group
 VlnPlot(
@@ -83,10 +81,10 @@ VlnPlot(
   ncol = 3,
   group.by = "Group"
 )
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_QC_byGroup.pdf", height = 10, width = 15, dpi=600)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_QC_byGroup.pdf", height = 10, width = 15, dpi=600)
 
 DimPlot(obj_all, label = T, group.by = "Group")
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byGroup.pdf", height = 10, width = 15, dpi=600)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byGroup.pdf", height = 10, width = 15, dpi=600)
 ```
 
 #Annotate cell types using SingleR (RNA)
@@ -167,9 +165,13 @@ obj_all_oligop <- AddMetaData(obj_all_oligop, metadata = "glia", col.name = "cel
 
 merged_all <- merge(obj_all_exc, y = c(obj_all_inh, obj_all_glia,obj_all_oligop,obj_all_DAMs), add.cell.ids = c("exc", "inh", "glia","oligop","DAMs"), project = "pfc", merge.dr="TRUE")
 
+#Trick to avoid joinlayers issue:
+merged_all<-subset(merged_all, seurat_clusters=="19" &
+                  RNA_ABAsc=="DAM", invert=TRUE)
+
 Idents(merged_all)<-merged_all$RNA_ABAsc
 DimPlot(merged_all, label=T)
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_ABAsc.pdf", height = 10, width = 15, dpi=600)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_ABAsc.pdf", height = 10, width = 15, dpi=600)
 ```
 
 #Annotate infected cells
@@ -181,20 +183,23 @@ CW3SL_pos <- WhichCells(merged_all, expression = CW3SL > 0)
 pos<-c(WPRE_pos,CW3SL_pos)
 
 merged_all$infected<- ifelse(colnames(merged_all) %in% pos, "Pos", "Neg")
+table(merged_all$infected, merged_all$orig.ident)
 save(merged_all,file="2_obj_all_RNA_QC.rds")
 load("objects/2_obj_all_RNA_QC.rds")
 ```
+
 #Plotting
 ```{r}
 plot<-DimPlot(merged_all, group.by="RNA_ABAsc", label=T, pt.size = 0.1) + NoLegend() + ggtitle(NULL)
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_ABAsc.pdf", height = 10, width = 10, dpi=600,plot=plot)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_ABAsc.pdf", height = 10, width = 10, dpi=600,plot=plot)
 plot<-DimPlot(merged_all, group.by="celltype", label=T) + NoLegend() + ggtitle(NULL)
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_celltype.pdf", height = 10, width = 10, dpi=600,plot=plot)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_celltype.pdf", height = 10, width = 10, dpi=600,plot=plot)
 plot<-DimPlot(merged_all, group.by="infected", label=T) + NoLegend() + ggtitle(NULL)
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_infected.pdf", height = 10, width = 10, dpi=600,plot=plot)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_UMAP_infected.pdf", height = 10, width = 10, dpi=600,plot=plot)
 plot<-DimPlot(merged_all, label = T, group.by = "Group", pt.size = 0.1) + NoLegend() + ggtitle(NULL)
-ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byGroup.pdf", height = 10, width = 10, dpi=600, plot=plot) 
+#ggsave("/scratch/csierra/multiome_osk/plots/2_RNA_DimPlot_byGroup.pdf", height = 10, width = 10, dpi=600, plot=plot) 
 ```
+
 #Plot % of infected cells per celltype
 ```{r}
 inf_celltype<-as.data.frame(table(merged_all$celltype, merged_all$infected))
@@ -207,7 +212,6 @@ inf_celltype$freq2<-inf_celltype$Freq/num_celltype$Freq
 DefaultAssay(merged_all)<-"ATAC"
 
 #Visualize parameters before filtering
-DensityScatter(merged_all, x = 'nucleosome_signal', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
 
 VlnPlot(
   object = merged_all,
@@ -251,7 +255,7 @@ plot<-VlnPlot(
   group.by = "Batch"
 )
 
-ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byBatch.pdf", height = 10, width = 15, dpi=600, plot = plot)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byBatch.pdf", height = 10, width = 15, dpi=600, plot = plot)
 
 plot<-VlnPlot(
   object = merged_all_atac,
@@ -260,13 +264,13 @@ plot<-VlnPlot(
   ncol = 5,
   group.by = "Group"
 )
-ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byGroup.pdf", height = 10, width = 15, dpi=600, plot = plot)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byGroup.pdf", height = 10, width = 15, dpi=600, plot = plot)
 ```
 
 #Nucleosome profile
 ```{r}
 merged_all_atac<-NucleosomeSignal(object = merged_all_atac)
 p<-FragmentHistogram(object = merged_all_atac, assay="ATAC", region= "chr1-1-5000000", group.by = "Group")
-ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byGroup.pdf", height = 5, width = 15, dpi=600, plot=p)
+#ggsave("/scratch/csierra/multiome_osk/plots/2_ATAC_QC_byGroup.pdf", height = 5, width = 15, dpi=600, plot=p)
 ```
 

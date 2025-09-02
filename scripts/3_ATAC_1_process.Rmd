@@ -1,24 +1,28 @@
-```{r setup, include=FALSE}
-.libPaths(c("/scratch/csierra/rstudio/R"))
-knitr::opts_chunk$set(echo = TRUE)
+---
+title: "3.ATAC.1 processing"
+author: "Cesar Sierra"
+output: html_document
+date: "2024-04-09"
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,
+  warning = F,
+  message = F
+)
 knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
 ```
 
-#Load packages
-```{r}
-library(ggplot2)
-library(Seurat)
-library(dplyr)
-library(Signac)
-library(irlba)
-#library(hdf5r)
-library(SingleCellExperiment)
-library(SeuratWrappers)
-library(harmony)
+```{r packages, include = FALSE}
+lapply(c("ggplot2","Seurat", "dplyr", "Signac", "irlba","SingleCellExperiment","SeuratWrappers","harmony"),
+       library, character.only = T, verbose = F)
 ```
 
-#Load object 
-```{r}
+```{r Load object }
 load(file="/scratch/csierra/multiome_osk/objects/2_obj_all_ATAC_RNA_QC.Robj")
 ```
 
@@ -53,6 +57,7 @@ rm(merged_all_atac)
 #With 10 lsi, no batch effect seen (but DAMs not clearly separated). With 20 yes. --> RunHarmony
 DimPlot(obj_atac, label=T)
 ```
+
 # Weighted nearest neighbor (WNN) analysis using both modalities
 ```{r}
 wnn_reduction <- function(object, n.pc = 35, n.lsi = 20){

@@ -1,11 +1,22 @@
+---
+title: "3.RNA.2 Differential Expression Analysis"
+author: "Cesar Sierra"
+output: html_document
+date: "2024-04-09"
+---
 
-```{r setup, include=FALSE}
-.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,
+  warning = F,
+  message = F
+)
 knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
 ```
 
-# Packages
 ```{r packages}
 library(Seurat)
 library(dplyr)
@@ -19,8 +30,7 @@ library(cowplot)
 library("readxl")
 ```
 
-#Load object
-```{r}
+```{r Load object}
 load("objects/3_RNA_1_obj_all_infect.rds")
 DefaultAssay(merged_all) <- "RNA"
 merged_all <- JoinLayers(merged_all)

@@ -1,0 +1,76 @@
+---
+title: "3.RNA.5 CHEA3 plotting"
+output: html_document
+date: "2024-01-18"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, echo=FALSE}
+#.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,        # Show code
+  warning = F,    # Hide warnings
+  message = F   # Hide package load messages
+)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+```{r packages, echo=FALSE, include = FALSE}
+lapply(c("stringr", "clusterProfiler", "ggplot2",
+         "writexl","readxl", "dplyr", "Seurat", "Signac"),
+       library, character.only = T, verbose = F)
+```
+
+#Load CHEA3 data
+```{r}
+chea<-read_xlsx(("/scratch/csierra/multiome_osk/analyses/RNA/2_AD_OSKvAD_GFP/CHEA3/2_CHEA3_DW.xlsx"))
+```
+
+```{r Load object and subset infected Pos, include = FALSE}
+load("/scratch/csierra/multiome_osk/objects/3_RNA_1_obj_all_infect_noCON_OSK.rds")
+DefaultAssay(merged_all) <- "RNA"
+merged_all <- JoinLayers(merged_all)
+#Subset infected
+merged_all_inf<-subset(merged_all, infected=="Pos")
+```
+
+# Are these factors expressed?
+```{r}
+universe<-as.data.frame(merged_all_inf@assays$RNA$counts)
+
+universe_filtered <- universe[rowSums(universe, na.rm = TRUE) >= 10, , drop = FALSE]
+
+chea_exp <- chea %>%
+  mutate(Expressed = tolower(TF) %in% tolower(row.names(universe_filtered)))
+```
+
+```{r}
+#Add score_plot value
+chea_exp$score_plot<-1/chea_exp$Score
+cheatop<-chea_exp[c(1,4,5,7),]
+cheatop$TF <- factor(cheatop$TF, levels = c("TSC22D1", "THYN1","THAP4", "POU5F1B"))
+
+```
+
+##Remove GO number and spaces
+```{r}
+cheatop %>%
+  ggplot(aes(score_plot, TF)) +
+  geom_errorbarh(aes(xmin = 0, xmax = score_plot),
+                 height = 0,
+                 position = position_dodge(width = .7)) +
+  geom_point(aes(size = ngenes),
+             position = position_dodge(width = .7)) +
+  scale_size(name = "ngenes") +
+  scale_color_discrete(guide = guide_legend(reverse = TRUE))
+ggsave("/scratch/csierra/multiome_osk/plots/3_RNA_X_CHEA3_lollipop_updated.pdf", height = 5, width = 6, dpi=300)
+```
+
+##Save excel
+```{r}
+write_xlsx(chea_exp, "/scratch/csierra/multiome_osk/analyses/RNA/2_AD_OSKvAD_GFP/CHEA3/2_CHEA3_DW_exp.xlsx")
+```

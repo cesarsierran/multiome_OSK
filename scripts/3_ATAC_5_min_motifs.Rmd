@@ -1,12 +1,23 @@
+---
+title: "3.ATAC.5 motif enrichment"
+author: "Cesar Sierra"
+output: html_document
+date: "2024-04-09"
+---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,
+  warning = F,
+  message = F
+)
 knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
-.libPaths("/scratch/csierra/rstudio/R")
 ```
 
-#Load packages
-```{r}
+```{r Load packages}
 library(tidyselect, lib.loc = "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1")
 library(fastmap)
 library(Seurat)
@@ -29,7 +40,6 @@ library(ComplexHeatmap)
 ```
 #Load object with peaks called per condition
 ```{r}
-#With Oct4::Sox2 footprint
 load(file="/scratch/csierra/multiome_osk/objects/3_ATAC_5_min_footprint_3.rds")
 ```
 ###Motif enrichment
@@ -132,7 +142,7 @@ enriched.motifs_AD_OSK_AD_GFP <- FindMotifs(
   features = da.peak,
   background=peaks.matched)
 ```
-#MotifPlot
+# MotifPlot
 ```{r}
 #Plot motifs of interest
 motifsoi<-c("KLF4", "POU5F1", "SOX2", "Pou5f1::Sox2")
@@ -142,7 +152,7 @@ mf<-MotifPlot(
 ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_motifplot.pdf", height = 5, width = 10, dpi=600,plot=mf)
 ```
 
-#Build heatmap
+# Build heatmap
 ```{r}
 enriched.motifs_AD_OSK_AD_GFP$comparison<-"AD_OSK_AD_GFP"
 enriched.motifs_AD_OSK_AD_GFP$logp<-log10(enriched.motifs_AD_OSK_AD_GFP$p.adjust)*-1
@@ -170,7 +180,7 @@ heat<-Heatmap(motids_df_logp, cluster_rows = F, cluster_columns = F)
 #ggsave("/scratch/csierra/multiome_osk/plots/motifs_heatmap_Klf4.pdf", height = 10, width = 10, dpi=600,plot=heat)
 ```
 
-#Plot of FC
+# Plot of FC
 ```{r}
 library(tidyr)
 motifs_long<-pivot_longer(motids_df, names_to="fold", cols = c("fold.enrichment.x", "fold.enrichment.y"))
@@ -184,7 +194,7 @@ fc<-ggplot(motifs_long, aes(x = fold, y = value, size = value)) +
 ggsave("/scratch/csierra/multiome_osk/plots/FC_motifs_heatmap.pdf", height = 10, width = 12, dpi=600,plot=fc)
 ```
 
-#Compute motif activity
+# Compute motif activity
 ```{r}
 obj_atac_min$Group <- factor(obj_atac_min$Group, levels = c("CON_GFP", "AD_GFP", "AD_OSK"))
 
@@ -261,6 +271,7 @@ motifact<-p2|p3|p4|p5
 ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_motifact.pdf", height = 5, width = 11, dpi=600,plot=motifact)
 ```
 
+# PlotFootprint
 ```{r}
 p3 <- PlotFootprint(obj_atac_min, features = c("KLF4", "SOX2", "POU5F1", "Pou5f1::Sox2"), group.by = "Group", show.expected = F)
 ggsave("/scratch/csierra/multiome_osk/plots/3_ATAC_5_footprint_inpeaks.pdf", height = 5, width = 5, dpi=600,plot=p3)

@@ -1,7 +1,21 @@
+---
+title: "4. Integration"
+output: html_document
+date: "2024-01-18"
+editor_options: 
+  chunk_output_type: console
+---
 
-```{r setup, include=FALSE}
-.libPaths(c("/scratch/csierra/rstudio/R" ))
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, echo=FALSE}
+#.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,        # Show code
+  warning = F,    # Hide warnings
+  message = F   # Hide package load messages
+)
 knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
 ```
 
@@ -96,7 +110,7 @@ ggscatter(int_avg_1, x = "avg_log2FC.y", y = "avg_log2FC.x",
 ```
 
 
-####Linked Peaks outside promoters
+####Linked Peaks
 ```{r}
 wilATAC_1_all_min<-wilATAC_1_all[,c(11,13)]
 linked_DA<-inner_join(linked_all, wilATAC_1_all, by="query_region")
@@ -161,7 +175,7 @@ wilATAC_sign_150_down_2<-subset(wilATAC_sign_150_2, avg_log2FC<0)
 wilATAC_2_sign_dw<-subset(wilATAC_2_sign, avg_log2FC<0)
 ```
 
-###Check RNA- ATAC correlation
+###Check RNA-ATAC correlation
 ####Promoters
 ```{r}
 wilRNA_sign_2$gene<-row.names(wilRNA_sign_2)
@@ -186,7 +200,7 @@ ggscatter(int_avg_2, x = "avg_log2FC.y", y = "avg_log2FC.x",
   scale_y_continuous(labels = label_number(accuracy = 1))
 ```
 
-###Linked Peaks outside promoters
+###Linked Peaks
 ```{r}
 library(dplyr)
 wilATAC_2_all_min<-wilATAC_2_all[,c(11,13)]
@@ -215,7 +229,6 @@ ggscatter(int_avg_2_linked_nonp, x = "avg_log2FC.y", y = "avg_log2FC.x",
           cor.coef = TRUE, cor.method = "pearson") +
   scale_y_continuous(labels = label_number(accuracy = 1))
 ```
-
 
 ##Compare correlations
 ```{r}
@@ -313,7 +326,7 @@ mean(wilATAC_sign_150_down_2$distanceToTSS)
 sd(wilATAC_sign_150_down_2$distanceToTSS)
 ```
 
-#Plot examples of rescue
+#Plot example
 ```{r}
 DefaultAssay(obj_atac)<-"peaks_celltypes_group"
 Idents(obj_atac)<-"Celltype_infected_group"
@@ -332,8 +345,43 @@ p1 <- CoveragePlot(
 )
 ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Kcnj3.pdf", height = 5, width = 7, dpi=600, plot=p1)
 
-#Prnp: example of rescue upon OSK indep of chromatin
+#Nav3
 p2 <- CoveragePlot(
+  object = obj_atac,
+  region = "Nav3",
+  features = "Nav3",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 10000,
+  extend.downstream = 10000,
+  region.highlight = granges[5:6]
+)
+
+#Cdh7
+p3 <- CoveragePlot(
+  object = obj_atac,
+  region = "Cdh7",
+  features = "Cdh7",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 100000,
+  extend.downstream = 100000,
+  region.highlight = granges[11:12]
+)
+
+#Nav3
+p4 <- CoveragePlot(
+  object = obj_atac,
+  region = "Cdh7",
+  features = "Cdh7",
+  expression.assay = "RNA",
+  idents = ids,
+  extend.upstream = 100000,
+  extend.downstream = 100000
+)
+
+#Prnp: example of rescue upon OSK indep of chromatin
+p5 <- CoveragePlot(
   object = obj_atac,
   region = "Prnp",
   features = "Prnp",
@@ -343,5 +391,5 @@ p2 <- CoveragePlot(
   extend.downstream = 1000,
 )
 
-ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Prnp.pdf", height = 5, width = 7, dpi=600, plot=p2)
+ggsave("/scratch/csierra/multiome_osk/plots/4_integration_Prnp.pdf", height = 5, width = 7, dpi=600, plot=p4)
 ```

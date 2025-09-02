@@ -1,0 +1,444 @@
+---
+title: "3.RNA.4 Engram and AD signatures"
+author: "Cesar Sierra"
+date: "2025-04-10"
+output:
+  html_document:
+    self_contained: true
+---
+
+```{r setup, echo=FALSE}
+#.libPaths(c("/scratch/csierra/rstudio/R", "/home/csierra/R/x86_64-pc-linux-gnu-library/4.1"))
+knitr::opts_chunk$set(
+  cache = TRUE,
+  cache.path="/scratch/csierra/multiome_osk",
+  cache.lazy = FALSE,
+  echo = F,        # Show code
+  warning = F,    # Hide warnings
+  message = F   # Hide package load messages
+)
+knitr::opts_knit$set(root.dir = "/scratch/csierra/multiome_osk")
+```
+
+```{r packages, echo=FALSE, include = FALSE}
+lapply(c("BiocVersion", "monocle", "ggplot2","Seurat", "genekitr", "readxl",
+         "biomaRt", "dplyr", "ggrepel", "writexl", "plotly", "ggnewscale",
+         "DDRTree", "pheatmap", "SeuratWrappers", "ggpubr",
+         "MASS","viridis","cerebroApp", "Rmisc"),
+       library, character.only = T, verbose = F)
+```
+
+```{r load object}
+load("objects/3_RNA_1_obj_all_infect_noCON_OSK.rds")
+DefaultAssay(merged_all) <- "RNA"
+merged_all[["RNA"]] <- JoinLayers(merged_all[["RNA"]])
+```
+
+```{r subset}
+# Subset cells of interest
+## subset infected
+merged_infected<-subset(merged_all, infected=="Pos")
+## subset WT
+merged_wt<-subset(merged_all, Group=="CON_GFP" & celltype=="exc")
+## subset exc
+merged_exc<-subset(merged_all, celltype=="exc")
+## subset exc and engram 
+merged_exc_pos<-subset(merged_all, celltype=="exc" & infected=="Pos")
+
+```
+
+# Engram signature - Pseudotime
+Cluster and order based on DEGs WT E vs WT NE
+```{r Seurat to CDS}
+merged_exc.cds <- as.CellDataSet(merged_exc)
+### Estimate size factors and dispersions
+merged_exc.cds <- estimateSizeFactors(merged_exc.cds)
+merged_exc.cds <- estimateDispersions(merged_exc.cds)
+```
+
+```{r Read DEGs WT E vs WT NE}
+WTengram_degs<-read_excel("/scratch/csierra/multiome_osk/analyses/RNA/6_intra/intraCON_GFP.xlsx")
+#Remove WPRE etc
+WTengram_degs<-tail(WTengram_degs, -2)
+WTengram_degs<-WTengram_degs$gene
+```
+
+### Order cells
+```{r}
+merged_exc.cds.engramSAll<-merged_exc.cds
+
+merged_exc.cds.engramSAll <-setOrderingFilter(merged_exc.cds.engramSAll, ordering_genes = WTengram_degs)
+
+merged_exc.cds.engramSAll <- reduceDimension(merged_exc.cds.engramSAll,
+                                              max_components = 2,
+                                              reduction_method = 'DDRTree',
+                                              residualModelFormulaStr = "~Batch",
+                                                norm_method = "vstExprs", scaling = T)
+
+
+merged_exc.cds.engramSAll <- orderCells(merged_exc.cds.engramSAll, reverse = TRUE)
+# saveRDS(merged_exc.cds.engramSAll, file = "merged_exc.cds.engramSAll2.rds")
+# merged_exc.cds.engramSAll2<-readRDS(file = "merged_exc.cds.engramSAll2.rds")
+
+p1<-plot_cell_trajectory(merged_exc.cds.engramSAll2, color_by = "infected")
+p2<-plot_cell_trajectory(merged_exc.cds.engramSAll2, color_by = "Pseudotime")
+
+#Extract values
+trajAll<-plot_cell_trajectory(merged_exc.cds.engramSAll2, color_by = "Pseudotime")
+point.dataAll <- ggplot_build(trajAll)[["plot"]][["data"]]
+#Get pseudotime values per group
+summaryAll<-point.dataAll %>%
+  group_by(Group, infected) %>%
+  dplyr::summarise(mean_x = mean(Pseudotime, na.rm = TRUE))
+
+#Barplot
+p<-ggplot(summaryAll, aes(x = Group, y = mean_x, fill = infected)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Engram signature - All",
+       x = "Group",
+       y = "Mean Pseudotime") +
+  theme_minimal()
+print(p)
+
+```
+
+## Engram AD signature - Pseudotime
+Cluster and order based on DEGs WT E vs AD E
+```{r Read DEGs WT E vs AD E}
+WTvsADengram_degs<-read_excel("/scratch/csierra/multiome_osk/Analyses/RNA/1_ADvCON_GFP/ADvCON_GFP_DE_Engram_fc01_noCON_OSK.xlsx")
+#Remove WPRE etc
+WTvsADengram_degs<-WTvsADengram_degs$gene
+```
+
+###### All
+```{r}
+merged_exc.cds.ADEngramSAll<-merged_exc.cds
+
+merged_exc.cds.ADEngramSAll <-setOrderingFilter(merged_exc.cds.ADEngramSAll, ordering_genes = WTvsADengram_degs)
+
+merged_exc.cds.ADEngramSAll <- reduceDimension(merged_exc.cds.ADEngramSAll,
+                                              max_components = 2,
+                                              reduction_method = 'DDRTree',
+                                              residualModelFormulaStr = "~Batch",
+                                              norm_method = "vstExprs", scaling = T)
+
+merged_exc.cds.ADEngramSAll <- orderCells(merged_exc.cds.ADEngramSAll)
+# saveRDS(merged_exc.cds.ADEngramSAll, file = "merged_exc.cds.ADEngramSAll.rds")
+# merged_exc.cds.ADEngramSAll<-readRDS(file = "merged_exc.cds.ADEngramSAll.rds")
+
+p1<-plot_cell_trajectory(merged_exc.cds.ADEngramSAll, color_by = "infected")
+p2<-plot_cell_trajectory(merged_exc.cds.ADEngramSAll, color_by = "Pseudotime")
+#Extract values
+trajAll<-plot_cell_trajectory(merged_exc.cds.ADEngramSAll, color_by = "Pseudotime")
+point.dataAll <- ggplot_build(trajAll)[["plot"]][["data"]]
+#Get pseudotime values per group
+summaryAll<-point.dataAll %>%
+  group_by(Group, infected) %>%
+  dplyr::summarise(mean_x = mean(Pseudotime, na.rm = TRUE))
+# Barplot
+p<-ggplot(summaryAll, aes(x = Group, y = mean_x, fill = infected)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "AD signature - All",
+       x = "Group",
+       y = "Mean Pseudotime") +
+  theme_minimal()
+print(p)
+```
+
+# Ploting
+```{r add AD score to Seurat object}
+#Engram signature
+merged_exc<-extractMonocleTrajectory(merged_exc.cds.engramSAll2, seurat=merged_exc, trajectory_name = "Engram_signature", column_state = "State", column_pseudotime = "Pseudotime")
+#AD signature
+merged_exc<-extractMonocleTrajectory(merged_exc.cds.ADEngramSAll, seurat=merged_exc, trajectory_name = "AD_signature", column_state = "State", column_pseudotime = "Pseudotime")
+#Non engram AD signature
+merged_exc<-extractMonocleTrajectory(merged_exc.cds.ADNonEngramSAll, seurat=merged_exc, trajectory_name = "AD_NE_signature", column_state = "State", column_pseudotime = "Pseudotime")
+```
+
+
+```{r Get per cell scores}
+cell_metaEngram<-merged_exc@misc[["trajectories"]][["monocle2"]][["Engram_signature"]][["meta"]]
+cell_metaEngram$cellid<-rownames(cell_metaEngram)
+cell_metaAD<-merged_exc@misc[["trajectories"]][["monocle2"]][["AD_signature"]][["meta"]]
+cell_metaAD$cellid<-rownames(cell_metaAD)
+cell_metaAD_NE<-merged_exc@misc[["trajectories"]][["monocle2"]][["AD_NE_signature"]][["meta"]]
+cell_metaAD_NE$cellid<-rownames(cell_metaAD_NE)
+cell_metaCellID<-merged_exc@meta.data
+cell_metaCellID$cellid<-rownames(cell_metaCellID)
+
+cell_metaCellID<-cell_metaCellID[,c(43,48,50,53)]
+
+#Join dataframes
+cell_meta<-left_join(cell_metaCellID, cell_metaEngram, by = "cellid")
+cell_meta<-left_join(cell_meta, cell_metaAD, by = "cellid")
+cell_meta<-left_join(cell_meta, cell_metaAD_NE, by = "cellid")
+
+#Give correct name to columns
+colnames(cell_meta)[7] <- "Engram"
+colnames(cell_meta)[11] <- "AD"
+colnames(cell_meta)[15] <- "AD_NE"
+
+#write.csv(cell_meta,"cell_meta.csv", row.names = FALSE)
+```
+
+#### Cell identity + AD_Engram
+
+```{r only pos 3D RNA_identity + AD_Engram CON, include=TRUE}
+#CON pos
+cell_meta_con_pos<-subset(cell_meta, Group=="CON_GFP" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_con_pos$AD, cell_meta_con_pos$RNA_identity_score, n = 100)
+
+con <- plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -(t(kde_matrix$z)),
+  type = "surface",
+  colors = "blue",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Identity score", range = c(0, 0.75)),
+      zaxis = list(title = "Cell Density", range = c(-3.5, 0))
+    ),
+    title = "CON")
+con2<-con
+con2
+```
+
+
+```{r only pos 3D RNA_identity + AD_Engram AD}
+#AD pos
+cell_meta_ad_pos<-subset(cell_meta, Group=="AD_GFP" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_ad_pos$AD, cell_meta_ad_pos$RNA_identity_score, n = 100)
+
+ad<-plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -(t(kde_matrix$z)),
+  type = "surface",
+  colors = "red",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Identity score", range = c(0, 0.75)),
+      zaxis = list(title = "Cell Density", range = c(-3.5, 0))
+    ),
+    title = "AD")
+ad2<-ad
+ad2
+```
+
+
+
+```{r only pos 3D RNA_identity + AD_Engram AD OSK}
+#AD OSK pos
+cell_meta_adosk_pos<-subset(cell_meta, Group=="AD_OSK" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_adosk_pos$AD, cell_meta_adosk_pos$RNA_identity_score, n = 100)
+
+ad_osk <- plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -(t(kde_matrix$z)),
+  type = "surface",
+  colors = "orange",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Identity score", range = c(0, 0.75)),
+      zaxis = list(title = "Cell Density", range = c(-3.5, 0))
+    ),
+    title = "AD OSK"
+  )
+ad_osk
+
+# Combine side-by-side
+subplot(con, ad, ad_osk, nrows = 1, margin = 0, shareY = TRUE, shareX = TRUE)
+```
+
+#### AD + Engram
+
+```{r only pos 3D AD_Engram + Engram CON}
+#CON pos
+cell_meta_con_pos<-subset(cell_meta, Group=="CON_GFP" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_con_pos$AD, cell_meta_con_pos$Engram, n = 100)
+
+con <- plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -t(kde_matrix$z),
+  type = "surface",
+  colors = "blue",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Engram score"),
+      zaxis = list(title = "Cell Density", range = c(-0.15, 0))  # Set z-axis limits
+    ),
+      title = "CON"
+    )
+con
+```
+
+
+```{r only pos 3D AD_Engram + Engram AD}
+#AD pos
+cell_meta_ad_pos<-subset(cell_meta, Group=="AD_GFP" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_ad_pos$AD, cell_meta_ad_pos$Engram, n = 100)
+
+ad<-plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -t(kde_matrix$z),
+  type = "surface",
+  colors = "red",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Engram score"),
+      zaxis = list(title = "Cell Density", range = c(-0.15, 0))  # Set z-axis limits
+    ),
+      title = "AD"
+    )
+ad
+```
+
+
+```{r only pos 3D AD_Engram + Engram AD OSK}
+#AD OSK pos
+cell_meta_adosk_pos<-subset(cell_meta, Group=="AD_OSK" & infected == "Pos")
+
+# This returns x, y (grid vectors) and z (matrix of density values)
+kde_matrix <- kde2d(cell_meta_adosk_pos$AD, cell_meta_adosk_pos$Engram, n = 100)
+
+ad_osk<-plot_ly(
+  x = kde_matrix$x,
+  y = kde_matrix$y,
+  z = -t(kde_matrix$z),
+  type = "surface",
+  colors = "orange",
+  alpha = 0.75,
+  showscale = FALSE 
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "AD score"),
+      yaxis = list(title = "Engram score"),
+      zaxis = list(title = "Cell Density", range = c(-0.15, 0))  # Set z-axis limits
+    ),
+      title = "AD OSK"
+    )
+ad_osk
+
+# Combine side-by-side
+subplot(con, ad, ad_osk, nrows = 1, margin = 0, shareY = TRUE, shareX = TRUE)
+```
+
+
+
+### Quantification
+#### Cell identity
+```{r}
+p <- ggplot(cell_meta, aes(x=Group, y=RNA_identity_score, fill=infected)) + 
+  geom_violin() + 
+  geom_boxplot(position = position_dodge(width = 0.9), width=0.1) +
+  theme_minimal()
+print(p)
+
+dataBar<-summarySE(cell_meta, measurevar="RNA_identity_score", groupvars=c("Group", "infected"))
+dataBar
+
+##ANOVA
+arc.aov <- aov(RNA_identity_score ~ infected*Group, data = cell_meta)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#Check with positive only
+cell_meta_pos<-subset(cell_meta, infected=="Pos")
+arc.aov <- aov(RNA_identity_score ~ Group, data = cell_meta_pos)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+```
+
+#### Engram score
+```{r}
+p <- ggplot(cell_meta, aes(x=Group, y=Engram, fill=infected)) + 
+  geom_violin() + 
+  geom_boxplot(position = position_dodge(width = 0.9), width=0.1) +
+  theme_minimal()
+print(p)
+
+dataBar<-summarySE(cell_meta, measurevar="Engram", groupvars=c("Group", "infected"))
+dataBar
+
+##ANOVA
+arc.aov <- aov(Engram ~ infected*Group, data = cell_meta)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#Check with positive only
+cell_meta_pos<-subset(cell_meta, infected=="Pos")
+arc.aov <- aov(Engram ~ Group, data = cell_meta_pos)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+```
+
+#### AD score
+```{r}
+p <- ggplot(cell_meta, aes(x=Group, y=AD, fill=infected)) + 
+  geom_violin() + 
+  geom_boxplot(position = position_dodge(width = 0.9), width=0.1) +
+  theme_minimal()
+print(p)
+
+dataBar<-summarySE(cell_meta, measurevar="AD", groupvars=c("Group", "infected"))
+dataBar
+
+##ANOVA
+arc.aov <- aov(AD ~ infected*Group, data = cell_meta)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+
+#Check with positive only
+cell_meta_pos<-subset(cell_meta, infected=="Pos")
+arc.aov <- aov(AD ~ Group, data = cell_meta_pos)
+summary(arc.aov)
+##Tukey
+TukeyHSD(x=arc.aov, conf.level=0.95)
+```
+
+
+
+
+
+
+
