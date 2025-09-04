@@ -1,5 +1,5 @@
 # Multiome OSK
-Code used to analyze the single-nuclei multiome data for the manuscript "Cognitive rejuvenation through partial reprogramming of engram cells"
+Code used to analyze the single-nuclei multiome dataset generated for the manuscript "Cognitive rejuvenation through partial reprogramming of engram cells"
 
 - ```0_multiome_objs.R```: create a Seurat objects from Cell Ranger ARC outputs of different samples.
 - ```1_merge.R```: merge all samples into a single Seurat object
