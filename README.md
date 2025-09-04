@@ -1,5 +1,5 @@
 # Multiome OSK
-Code used for the manuscript "Cognitive rejuvenation through partial reprogramming of engram cells"
+Code used to analyze the single-nuclei multiome data for the manuscript "Cognitive rejuvenation through partial reprogramming of engram cells"
 
 - ```0_multiome_objs.R```: create a Seurat objects from Cell Ranger ARC outputs of different samples.
 - ```1_merge.R```: merge all samples into a single Seurat object
@@ -19,5 +19,7 @@ Code used for the manuscript "Cognitive rejuvenation through partial reprogrammi
 - ```3_RNA_5_CHEA3.Rmd```: TF enrichment analysis of downregulated genes
 - ```4_integration.Rmd```: Integration analyses, including RNA-ATAC correlations
 - ```scCODA.py```: compositional analysis using ths scCODA package
+
+The sequencing data analyzed here is deposited in the Gene Expression Omnibus repository, with the series record GSE276656.
 
 The transcriptional landscapes from Figure S7 can be visualized [here](https://cesarsierra.shinyapps.io/multiome_shiny/).
